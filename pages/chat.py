@@ -1,8 +1,10 @@
+import re
 import streamlit as st
 from anthropic import Anthropic
 import requests
 
-st.title("Luxsin Chatbot")
+from luxsin.client import get_settings, update_settings
+from luxsin.luxsin import LANGUAGE_NAME
 
 client = Anthropic(
     api_key=st.secrets["ANTHROPIC_API_KEY"],
@@ -20,8 +22,21 @@ selected_model = st.sidebar.selectbox("Model", options=models, index=models.inde
 if "anthropic_model" not in st.session_state:
     st.session_state.anthropic_model = selected_model
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+ip = st.sidebar.text_input("Device IP", key="ip", placeholder="192.168.1.1")
+if not (ip and ip.strip() and re.match(r'^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$', ip)):
+    st.warning("Please enter a valid IP address")
+    st.stop()
+
+try:
+    settings = get_settings(ip)
+except Exception as e:
+    st.error(f"Failed to get device settings: {e}. Please enter a valid IP address.")
+    st.stop()
+
+st.title(f"Welcome to {settings['device']}")
+language = st.sidebar.selectbox("Language", options=LANGUAGE_NAME, index=settings['language'])
+if language != LANGUAGE_NAME[settings['language']]:
+    update_settings(ip, {"language": LANGUAGE_NAME.index(language)})
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
