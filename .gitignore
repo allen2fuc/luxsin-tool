@@ -10,3 +10,6 @@ wheels/
 .venv
 uv.lock
 .streamlit/secrets.toml
+
+sqlite.db
+requirements.txt

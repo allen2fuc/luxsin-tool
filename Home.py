@@ -1,9 +1,9 @@
 import json
 import streamlit as st
 
-from luxsin.client import get_device_settings, set_device_settings
-from luxsin.constants import AI_SYSTEM_PROMPT, LANGUAGE_NAME, MAX_TOOL_ROUNDS, TOOLS
-from luxsin.utils import execute_tool, is_accessible, is_valid_ip, load_models
+from app.luxsin.client import get_device_settings, set_device_settings
+from app.luxsin.constants import AI_SYSTEM_PROMPT, LANGUAGE_NAME, MAX_TOOL_ROUNDS, TOOLS
+from app.luxsin.utils import execute_tool, is_accessible, is_valid_ip, load_models
 from anthropic import Anthropic
 
 st.set_page_config(

@@ -1,9 +1,8 @@
 import streamlit as st
-import re
 
 import logging
 
-from luxsin.client import get_current_peq, get_peq_data, get_peq_list, get_device_settings, set_device_settings
+from app.luxsin.client import get_peq_data, get_device_settings, set_device_settings
 
 logging.basicConfig(
     level=logging.INFO, format='%(asctime)s - %(name)s:%(lineno)d - %(levelname)s - %(message)s', 

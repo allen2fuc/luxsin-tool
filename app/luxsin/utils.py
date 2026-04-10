@@ -3,7 +3,7 @@ import re
 from typing import Any
 import requests
 
-from luxsin.constants import FUNCTION_MAP
+from .constants import FUNCTION_MAP
 
 from .client import get_msg_count
 

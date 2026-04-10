@@ -2,7 +2,7 @@ import json
 
 import httpx
 
-from luxsin.schemas import parse_filter_type
+from .schemas import parse_filter_type
 from .crypto import decode_custom_base64, encode_custom_base64
 
 TIMEOUT = 3

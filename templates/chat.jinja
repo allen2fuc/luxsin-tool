@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='css/chat.css') }}" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="toolbar">
+      <span class="toolbar-title">{{ title }}</span>
+      <div class="toolbar-actions">
+        <label class="chat-select-label" for="chat-select">Chat</label>
+        <select id="chat-select" class="chat-select" aria-label="Select chat"></select>
+        <button id="clear" type="button" class="btn-secondary">Clear chat</button>
+      </div>
+    </div>
+    <div id="chat" class="chat" aria-live="polite"></div>
+
+    <div class="input-row">
+      <input id="question" type="text" placeholder="Type a message…" autocomplete="off" />
+      <button id="send" type="button">Send</button>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="modal-backdrop" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div class="modal-panel" id="confirm-modal-panel">
+      <div class="modal-header">
+        <span class="modal-icon" id="confirm-modal-icon" aria-hidden="true">🛠️</span>
+        <h2 id="confirm-modal-title" class="modal-title">Confirm</h2>
+      </div>
+      <div id="confirm-modal-body" class="modal-body"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-modal-cancel" id="confirm-modal-cancel">Cancel</button>
+        <button type="button" class="btn-modal btn-modal-ok" id="confirm-modal-ok">Agree</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', path='js/device.js') }}"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="{{ url_for('static', path='js/chat.js') }}"></script>
+</body>
+</html>
