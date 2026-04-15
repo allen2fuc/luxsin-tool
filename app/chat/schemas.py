@@ -33,3 +33,21 @@ class OptimizationRecordRead(BaseModel):
     before_peq: dict
     after_peq: dict
     applied: bool
+
+
+class ConfigBase(BaseModel):
+    base_url: str
+    api_key: str
+    model: str
+
+class ConfigCreate(ConfigBase):
+    mac: str
+
+class ConfigRead(ConfigBase):
+    id: uuid.UUID
+    mac: str
+
+class ConfigUpdate(BaseModel):
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None

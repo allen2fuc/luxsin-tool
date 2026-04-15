@@ -136,6 +136,10 @@
     let recentConsumptionEl = null;
     /** 优化记录按钮 */
     let optimizationRecordsBtn = null;
+    /** 配置按钮 */
+    let configBtn = null;
+    /** 新建会话按钮 */
+    let newChatBtn = null;
     /** token 轮询定时器 */
     let consumptionTimer = null;
 
@@ -205,7 +209,7 @@
         return points;
     }
 
-    function drawEqCompare(canvas, eqA, eqB) {
+    function drawEqCompare(canvas, eqA, eqB, labelA = "A", labelB = "B") {
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
         const w = canvas.width;
@@ -243,6 +247,31 @@
             ctx.stroke();
         });
 
+        // 横轴坐标标签
+        ctx.fillStyle = "rgba(255,255,255,0.72)";
+        ctx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].forEach((f) => {
+            const x = xOf(f);
+            const label = f >= 1000 ? `${f / 1000}k` : String(f);
+            ctx.fillText(label, x, h - pad.b + 6);
+        });
+
+        // Y 轴坐标标签（dB）
+        ctx.fillStyle = "rgba(255,255,255,0.72)";
+        ctx.font = "11px system-ui, -apple-system, Segoe UI, sans-serif";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        [-12, -6, 0, 6, 12].forEach((g) => {
+            const y = yOf(g);
+            const label = g > 0 ? `+${g}` : String(g);
+            ctx.fillText(label, pad.l - 6, y);
+        });
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+        ctx.fillText("dB", 6, pad.t - 2);
+
         const drawLine = (pts, color) => {
             ctx.strokeStyle = color;
             ctx.lineWidth = 2;
@@ -257,6 +286,31 @@
         };
         drawLine(a, "#5bbcff");
         drawLine(b, "#ffb347");
+
+        // 图例
+        const legendX = w - 220;
+        const legendY = pad.t + 8;
+        const legendLineW = 22;
+        ctx.font = "12px system-ui, -apple-system, Segoe UI, sans-serif";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+
+        ctx.strokeStyle = "#5bbcff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(legendX, legendY);
+        ctx.lineTo(legendX + legendLineW, legendY);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fillText(labelA, legendX + legendLineW + 8, legendY);
+
+        ctx.strokeStyle = "#ffb347";
+        ctx.beginPath();
+        ctx.moveTo(legendX, legendY + 18);
+        ctx.lineTo(legendX + legendLineW, legendY + 18);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fillText(labelB, legendX + legendLineW + 8, legendY + 18);
     }
 
     /**
@@ -316,10 +370,23 @@
             itemBtn.style.width = "100%";
             itemBtn.style.padding = "8px 10px";
             itemBtn.textContent = `${idx + 1}. ${at} | ${stateText} | ${beforeName} -> ${afterName}`;
-            itemBtn.addEventListener("click", () => {
-                drawEqCompare(canvas, r.before_peq || {}, r.after_peq || {});
-                canvas.style.display = "block";
-                status.textContent = `Selected #${idx + 1}: A=${beforeName}, B=${afterName}`;
+            itemBtn.addEventListener("click", async () => {
+                try {
+                    const ip = await getDeviceIp();
+                    const device = new Luxsin(ip);
+                    const currentEq = await device.currentPeq();
+                    drawEqCompare(
+                        canvas,
+                        currentEq || {},
+                        r.after_peq || {},
+                        `Current`,
+                        `Recommended`
+                    );
+                    canvas.style.display = "block";
+                    status.textContent = `Selected #${idx + 1}: A=Current(${currentEq?.name || "current"}), B=Recommended(${afterName})`;
+                } catch (err) {
+                    status.textContent = `加载当前EQ失败: ${formatDeviceToolError(err)}`;
+                }
             });
 
             const btnApply = document.createElement("button");
@@ -373,7 +440,16 @@
                     const nextState = r.applied ? "应用" : "回滚";
                     itemBtn.textContent = `${idx + 1}. ${at} | ${nextState} | ${beforeName} -> ${afterName}`;
                     refreshActionButtons();
-                    status.textContent = `记录 #${idx + 1} 已${actionLabel}到设备。`;
+                    const currentEq = await device.currentPeq();
+                    drawEqCompare(
+                        canvas,
+                        currentEq || {},
+                        r.after_peq || {},
+                        `Current`,
+                        `Recommended`
+                    );
+                    canvas.style.display = "block";
+                    status.textContent = `记录 #${idx + 1} 已${actionLabel}。图表已刷新：A=Current(${currentEq?.name || "current"}), B=Recommended(${afterName})`;
                 } catch (err) {
                     status.textContent = `${actionLabel}失败: ${formatDeviceToolError(err)}`;
                 } finally {
@@ -454,21 +530,108 @@
     }
 
     /**
+     * 弹出并更新 AI 配置（base_url / api_key / model）。
+     */
+    async function openConfigEditor() {
+        if (configBtn) configBtn.disabled = true;
+        try {
+            const mac = await ensureMac();
+            if (!mac) {
+                addMsg("tool", "Cannot load config: no device MAC.");
+                return;
+            }
+            const res = await fetch("/chat/get_config?mac=" + encodeURIComponent(mac));
+            if (!res.ok) {
+                addMsg("tool", `Load config failed: HTTP ${res.status}`);
+                return;
+            }
+            const data = await res.json();
+            const cfg = data?.config;
+            if (!cfg?.id) {
+                addMsg("tool", "Load config failed: missing config id.");
+                return;
+            }
+
+            const baseUrl = window.prompt("base_url", cfg.base_url || "");
+            if (baseUrl === null) return;
+            const apiKey = window.prompt("api_key", cfg.api_key || "");
+            if (apiKey === null) return;
+            const model = window.prompt("model", cfg.model || "");
+            if (model === null) return;
+
+            const saveRes = await fetch(
+                "/chat/update_config?config_id=" + encodeURIComponent(String(cfg.id)),
+                {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        base_url: baseUrl,
+                        api_key: apiKey,
+                        model: model,
+                    }),
+                }
+            );
+            if (!saveRes.ok) {
+                const errText = await saveRes.text();
+                addMsg("tool", `Save config failed: HTTP ${saveRes.status} ${errText.slice(0, 160)}`);
+                return;
+            }
+            addMsg("tool", "Config updated successfully.");
+        } catch (err) {
+            addMsg("tool", `Config update failed: ${err?.message || String(err)}`);
+        } finally {
+            if (configBtn) configBtn.disabled = false;
+        }
+    }
+
+    /**
      * 初始化工具栏上的优化记录按钮与 token 指标。
      */
     function initOptimizationControls() {
         if (!toolbarActions) return;
+        newChatBtn = document.createElement("button");
+        newChatBtn.type = "button";
+        newChatBtn.className = "btn-secondary";
+        newChatBtn.textContent = "+";
+        newChatBtn.title = "New chat";
+        newChatBtn.setAttribute("aria-label", "New chat");
+        newChatBtn.addEventListener("click", async () => {
+            currentChatId = null;
+            chatEl.innerHTML = "";
+            try {
+                const mac = await ensureMac();
+                if (mac) {
+                    localStorage.removeItem(chatIdStorageKey(mac));
+                }
+            } catch (_) {
+                // ignore storage sync errors
+            }
+            if (chatSelect) {
+                chatSelect.value = "";
+                chatSelect.selectedIndex = -1;
+            }
+            addMsg("tool", "Started a new chat. Next message will create a new session.");
+        });
+
         optimizationRecordsBtn = document.createElement("button");
         optimizationRecordsBtn.type = "button";
         optimizationRecordsBtn.className = "btn-secondary";
         optimizationRecordsBtn.textContent = "Optimization Records";
         optimizationRecordsBtn.addEventListener("click", showOptimizationRecords);
 
+        configBtn = document.createElement("button");
+        configBtn.type = "button";
+        configBtn.className = "btn-secondary";
+        configBtn.textContent = "Config";
+        configBtn.addEventListener("click", openConfigEditor);
+
         recentConsumptionEl = document.createElement("span");
         recentConsumptionEl.style.marginLeft = "8px";
         recentConsumptionEl.style.opacity = "0.9";
         recentConsumptionEl.textContent = "Recent 4h Tokens: -";
 
+        toolbarActions.appendChild(newChatBtn);
+        toolbarActions.appendChild(configBtn);
         toolbarActions.appendChild(optimizationRecordsBtn);
         toolbarActions.appendChild(recentConsumptionEl);
     }

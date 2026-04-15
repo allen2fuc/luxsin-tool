@@ -5,7 +5,7 @@ from typing import Literal
 import uuid
 
 import anthropic
-from fastapi import Depends, FastAPI, Query, Request, BackgroundTasks
+from fastapi import Body, Depends, FastAPI, Query, Request, BackgroundTasks
 from fastapi.responses import EventSourceResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -13,12 +13,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chat import crud as chat_crud
-from app.chat.models import Chat, Message
-from app.chat.schemas import ChatRead, MessageRead, OptimizationRecordRead
-from app.core.anthropic import anthropic_client
+from app.chat.models import DEFAULT_TITLE, Chat, Message
+from app.chat.schemas import ChatRead, ConfigCreate, ConfigUpdate, MessageRead, OptimizationRecordRead
+from app.core.anthropic import get_anthropic_client
 from app.core.database import get_db, get_db_cm, init_db
 from app.core.redis import redis_client
-from app.luxsin.constants import AI_EQ_ANALYZE_PROMPT, AI_EQ_OPTIMIZE_PROMPT, AI_SUMMARY_TEXT_PROMPT, AI_SYSTEM_PROMPT, LANGUAGE_NAME, anthropic_tools
+from app.luxsin.constants import AI_EQ_ANALYZE_PROMPT, AI_EQ_OPTIMIZE_PROMPT, AI_SUMMARY_TEXT_PROMPT, AI_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, LANGUAGE_NAME, anthropic_tools
 
 import logging
 
@@ -105,6 +105,16 @@ async def update_message_applied(message_id: uuid.UUID = Query(..., description=
     await chat_crud.update_message_applied(message_id, applied, db)
     return JSONResponse({"ok": True})
 
+@app.patch("/chat/update_config")
+async def update_config(config_id: uuid.UUID = Query(..., description="Config ID"), config: ConfigUpdate = Body(..., description="Config"), db: AsyncSession = Depends(get_db)):
+    await chat_crud.update_config(config_id, config.model_dump(exclude_unset=True), db)
+    return JSONResponse({"ok": True})
+
+@app.get("/chat/get_config")
+async def get_config(mac: str = Query(..., description="Device MAC"), db: AsyncSession = Depends(get_db)):
+    config = await chat_crud.get_or_create_config(mac, db)
+    return {"ok": True, "config": config}
+
 @app.post("/chat/tool_result")
 async def receive_tool_result(req: ToolResultRequest):
     ok = req.content.get("ok", False)
@@ -121,6 +131,15 @@ async def receive_tool_result(req: ToolResultRequest):
 async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     # 创建或获取会话
     chat = await _resolve_chat(question, db)
+
+    ai_config = await chat_crud.get_or_create_config(question.mac, db)
+    is_custom_client, anthropic_client = get_anthropic_client(ai_config.api_key, ai_config.base_url)
+
+    if is_custom_client:
+        logger.info(f"use custom anthropic client for mac: {question.mac}")
+
+
+    model = ai_config.model or "claude-opus-4-5-20251101"
 
     # 获取系统提示词
     system_prompt = AI_SYSTEM_PROMPT.substitute(language=LANGUAGE_NAME[question.language], device=question.device)
@@ -144,7 +163,7 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
             async with anthropic_client.messages.stream(
                 system=system_prompt,
                 # 可选模型：claude-3-haiku-20240307
-                model="claude-opus-4-5-20251101",
+                model=model,
                 messages=messages,
                 tools=anthropic_tools,
                 max_tokens=4096,
@@ -180,11 +199,12 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                 # 如果最后一条消息不是 tool_use，则 根据条件 压缩上下文
                 is_normal_stop = final_message.stop_reason != "tool_use"
                 if is_normal_stop:
-                    await _maybe_compress_context(chat, messages, usage, question.language, background_tasks)
+                    await _maybe_compress_context(chat, messages, usage, question.language, background_tasks, anthropic_client, model)
+                    await _generate_title(chat, messages, question.language, question.device, background_tasks, anthropic_client, model)
                     yield QuestionResponse(type="done")
                     break
 
-                async for qr in _execute_tools_use(contents, messages, chat, db):
+                async for qr in _execute_tools_use(contents, messages, chat, db, anthropic_client, model):
                     yield qr
 
         except anthropic.APITimeoutError as e:
@@ -197,7 +217,7 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
             break
 
 
-async def _execute_tools_use(contents: list, messages: list, chat: Chat, db: AsyncSession):
+async def _execute_tools_use(contents: list, messages: list, chat: Chat, db: AsyncSession, anthropic_client, model):
     """设备侧工具由前端执行后 POST /chat/tool_result；Redis 唤醒后收集 tool_results（后续可接入第二轮模型调用）。"""
     tool_results: list[dict] = []
     for block in contents:
@@ -208,7 +228,7 @@ async def _execute_tools_use(contents: list, messages: list, chat: Chat, db: Asy
         tool_input = block.get("input")
         backend_fn = BACKEND_TOOLS_MAP.get(name)
         if backend_fn:
-            tool_result = await backend_fn(tool_input, chat.id, db)
+            tool_result = await backend_fn(tool_input, chat.id, db, anthropic_client, model)
             if tool_result["ok"]:
                 c = tool_result["content"]
                 if isinstance(c, dict):
@@ -241,7 +261,7 @@ async def _execute_tools_use(contents: list, messages: list, chat: Chat, db: Asy
     db_messgae = Message(chat_id=chat.id, role="user", content=json.dumps(tool_results, ensure_ascii=False))
     await chat_crud.create_message(db_messgae, db)
             
-async def _maybe_compress_context(chat: Chat, messages: list, usage, language: int, background_tasks: BackgroundTasks) -> None:
+async def _maybe_compress_context(chat: Chat, messages: list, usage, language: int, background_tasks: BackgroundTasks, anthropic_client, model) -> None:
     tokens = usage.input_tokens + usage.output_tokens
 
     logger.info(f"maybe_compress_context: chat_id={chat.id}, tokens={tokens}, messages={len(messages)}")
@@ -262,7 +282,7 @@ async def _maybe_compress_context(chat: Chat, messages: list, usage, language: i
         
         try:
             resp = await anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=model,
                 system=summary_prompt,
                 messages=messages,
                 max_tokens=4096,
@@ -322,7 +342,8 @@ async def _resolve_chat(question: QuestionRequest, db: AsyncSession) -> Chat:
         chat = await chat_crud.get_chat(question.chat_id, db)
         if chat:
             return chat
-    return await chat_crud.get_or_create_chat(question.mac, db)
+    # chat_id 为空时显式创建新会话（支持前端“+ 新建会话”）
+    return await chat_crud.create_chat(Chat(mac=question.mac), db, refresh=True)
 
 
 async def _get_content_messages(question: QuestionRequest, chat: Chat, db: AsyncSession):
@@ -510,7 +531,7 @@ def _get_system_prompt(question: QuestionRequest, messages: list) -> str:
     return AI_SYSTEM_PROMPT.substitute(language=LANGUAGE_NAME[question.language], device=question.device)
 
 
-async def _optimize_eq(raw_peq: dict, chat_id: uuid.UUID, db: AsyncSession) -> dict:
+async def _optimize_eq(raw_peq: dict, chat_id: uuid.UUID, db: AsyncSession, anthropic_client, model) -> dict:
     """
     当遇到非device工具时，调用此接口。比如优化EQ、摘要等。
     """
@@ -523,7 +544,7 @@ async def _optimize_eq(raw_peq: dict, chat_id: uuid.UUID, db: AsyncSession) -> d
 
         resp = await anthropic_client.messages.create(
             system=AI_EQ_OPTIMIZE_PROMPT,
-            model="claude-opus-4-5-20251101",
+            model=model,
             messages=user_message,
             max_tokens=8192,
             output_config={
@@ -579,3 +600,69 @@ async def _optimize_eq(raw_peq: dict, chat_id: uuid.UUID, db: AsyncSession) -> d
 BACKEND_TOOLS_MAP = {
     "optimize_eq": _optimize_eq,
 }
+
+
+
+# 生成标题
+async def _generate_title(chat: Chat, messages: list, language: int, device: str, background_tasks: BackgroundTasks, anthropic_client, model) -> None:
+
+    if chat.title != DEFAULT_TITLE:
+        return None
+
+    async def _generate_title_task(chat_id: uuid.UUID, messages: list, language: int):
+
+        try:
+            generate_title_prompt = GENERATE_TITLE_PROMPT.substitute(language=LANGUAGE_NAME[language])
+
+            # 用户输入的信息，将用户输入的消息合并（content 可能是 list/dict，需要先转字符串）
+            merged_user_contents = []
+            for msg in messages:
+                if msg.get("role") != "user":
+                    continue
+                c = msg.get("content", "")
+                if isinstance(c, str):
+                    merged_user_contents.append(c)
+               
+            user_input_message = "User input messages:\n" + "\n".join(merged_user_contents)
+
+            user_message = [{"role": "user", "content": user_input_message}]
+
+            resp = await anthropic_client.messages.create(
+                system=generate_title_prompt,
+                model=model,
+                messages=user_message,
+                max_tokens=10,
+                output_config={
+                    "format": {
+                        "type": "json_schema",
+                        "schema": {
+                            "type": "string",
+                            "maxLength": 10,
+                        },
+                    },
+                },
+            )
+
+            result = resp.content[0].text if resp.content else ""
+            replaced_result = result.strip().strip('"') if result else DEFAULT_TITLE
+
+            logger.info(f"generate title: {chat_id} {result}")
+
+            async with get_db_cm() as db:
+
+                if replaced_result != DEFAULT_TITLE and "New Title" not in replaced_result:
+                    await chat_crud.update_chat_title(chat_id, replaced_result, db)
+
+                await chat_crud.create_message_batch([
+                    Message(chat_id=chat_id, role="user", content=user_input_message, tokens=resp.usage.input_tokens, type=3),
+                    Message(chat_id=chat_id, role="assistant", content=result, tokens=resp.usage.output_tokens, type=3),
+                    ], db)
+
+                return None
+
+        except Exception as e:
+            logger.exception(e)
+    
+    background_tasks.add_task(_generate_title_task, chat.id, messages, language)
+
+    return None

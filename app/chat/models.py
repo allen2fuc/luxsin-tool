@@ -4,13 +4,18 @@ from sqlmodel import JSON, Field, SQLModel, Relationship, Column, DateTime, Smal
 
 import uuid
 
+
+DEFAULT_TITLE = "New Chat"
+
 class Chat(SQLModel, table=True):
     __tablename__ = "ai_chat"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    title: str = Field(default="New Chat", nullable=False)
+    title: str = Field(default=DEFAULT_TITLE, nullable=False)
     mac: str = Field(nullable=False)
     total_token_used: int = Field(default=0)
+    deleted: bool = Field(default=False)
+    deleted_at: datetime | None = Field(default=None, nullable=True)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(sa_column=Column(DateTime, default=datetime.now, onupdate=datetime.now))
 
@@ -35,7 +40,7 @@ class Message(SQLModel, table=True):
 
     summarized: bool = Field(default=False)
 
-    type: int = Field(sa_column=Column(SmallInteger, default=0, comment="0:默认消息,1:摘要消息,2:优化消息"))
+    type: int = Field(sa_column=Column(SmallInteger, default=0, comment="0:默认消息,1:摘要消息,2:优化消息,3:生成标题"))
 
     # 优化结果
     before_peq: dict | None = Field(sa_column=Column(JSON, nullable=True))
@@ -47,3 +52,16 @@ class Message(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
 
     chat: "Chat" = Relationship(back_populates="messages")
+
+
+class Config(SQLModel, table=True):
+    __tablename__ = "ai_config"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    mac: str = Field(nullable=False, unique=True, index=True)
+    base_url: str | None = Field(default=None, nullable=True)
+    api_key: str | None = Field(default=None, nullable=True)
+    model: str | None = Field(default=None, nullable=True)
+
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(sa_column=Column(DateTime, default=datetime.now, onupdate=datetime.now))

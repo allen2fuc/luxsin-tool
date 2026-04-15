@@ -580,3 +580,23 @@ AI_SUMMARY_TEXT_PROMPT = Template("""
   "pending_intent": "<用户尚未完成的需求，无则 null>"
 }
 """)
+
+
+GENERATE_TITLE_PROMPT = Template("""根据用户的第一条消息，生成一个简洁的对话标题。
+
+规则：
+- 语言：始终使用 ${language} 输出
+- 不超过10个字
+- 不加引号、标点符号结尾
+- 与 Luxsin 音频设备无关则只回复：New Title
+- 直接输出标题，不要任何解释或前缀
+
+示例：
+用户消息：帮我把200Hz的增益调低一点
+标题：调整200Hz增益
+
+用户消息：设备连不上怎么办
+标题：设备连接问题排查
+
+用户消息：今天天气怎么样
+标题：New Title""")

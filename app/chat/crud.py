@@ -2,10 +2,12 @@
 
 from datetime import datetime, timedelta
 import uuid
-from sqlmodel import delete, func, select
+from sqlmodel import delete, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from .models import Chat, Message
+from app.chat.schemas import ConfigCreate
+
+from .models import Config, Chat, Message
 
 async def create_chat(chat: Chat, db: AsyncSession, commit: bool = True, refresh: bool = False) -> Chat:
     db.add(chat)
@@ -15,26 +17,28 @@ async def create_chat(chat: Chat, db: AsyncSession, commit: bool = True, refresh
         await db.refresh(chat)
     return chat
 
-async def get_or_create_chat(mac: str, db: AsyncSession):
-    chats = await get_chats(mac, db)
-    if not chats:
-        chat = Chat(mac=mac)
-        return await create_chat(chat, db, refresh=True)
-    return chats[0]
+async def update_chat_title(chat_id: uuid.UUID, title: str, db: AsyncSession) -> None:
+    stmt = update(Chat).where(Chat.id == chat_id).values(title=title)
+    await db.exec(stmt)
+    await db.commit()
+    return None
 
 async def get_chats(mac: str, db: AsyncSession):
-    stmt = select(Chat).where(Chat.mac == mac).order_by(Chat.created_at.desc())
+    stmt = select(Chat).where(Chat.mac == mac, Chat.deleted == False).order_by(Chat.created_at.desc())
     result = await db.exec(stmt)
     return result.all()
 
 async def get_chat(id: uuid.UUID, db: AsyncSession):
-    return await db.get(Chat, id)
+    stmt = select(Chat).where(Chat.id == id, Chat.deleted == False)
+    result = await db.exec(stmt)
+    return result.one_or_none()
 
 async def delete_chat(id: uuid.UUID, db: AsyncSession):
     chat = await db.get(Chat, id)
     if chat:
-        await delete_chat_messages(chat.id, db, commit=False)
-        await db.delete(chat)
+        # await delete_chat_messages(chat.id, db, commit=False)
+        chat.deleted = True
+        chat.deleted_at = datetime.now()
         await db.commit()
         return True
     return False
@@ -94,7 +98,7 @@ async def get_recent_consumption(mac: str, db: AsyncSession, hours: int = 4):
 
 # 获取优化记录列表根据chat_id
 async def get_optimization_records(chat_id: uuid.UUID, db: AsyncSession):
-    stmt = select(Message).where(Message.chat_id == chat_id, Message.type == 2, Message.before_peq.isnot(None), Message.after_peq.isnot(None)).order_by(Message.created_at.desc())
+    stmt = select(Message).join(Chat, Message.chat_id == Chat.id).where(Message.chat_id == chat_id, Chat.deleted == False, Message.type == 2, Message.before_peq.isnot(None), Message.after_peq.isnot(None)).order_by(Message.created_at.desc())
     result = await db.exec(stmt)
     return result.all()
 
@@ -105,3 +109,31 @@ async def update_message_applied(message_id: uuid.UUID, applied: bool, db: Async
         message.applied_at = datetime.now()
         await db.commit()
     return None
+
+
+async def create_config(config_data: dict, db: AsyncSession):
+    config = Config(**config_data)  
+    db.add(config)
+    await db.commit()
+    await db.refresh(config)
+    return config
+
+async def get_config_by_mac(mac: str, db: AsyncSession):
+    stmt = select(Config).where(Config.mac == mac)
+    result = await db.exec(stmt)
+    return result.one_or_none()
+
+async def update_config(config_id: uuid.UUID, update_data: dict, db: AsyncSession):
+    config = await db.get(Config, config_id)
+    if config:
+        for key, value in update_data.items():
+            setattr(config, key, value)
+        await db.commit()
+    return None
+
+async def get_or_create_config(mac: str, db: AsyncSession):
+    config = await get_config_by_mac(mac, db)
+    if not config:
+        config = ConfigCreate(mac=mac)
+        return await create_config(config.model_dump(exclude_unset=True), db)
+    return config
