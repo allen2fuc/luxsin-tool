@@ -213,6 +213,8 @@ class Luxsin {
      * @param {object} peq  PEQ 配置对象
      */
     async updatePeq(peq) {
+        // peq= {name: 'Ziigaat Odyssey - Bright High Frequency', brand: 'Ziigaat', model: 'Odyssey', filters: Array(10), preamp: -5.5, …}
+        console.log("peq", peq);
         // type 必须发整数（设备不接受字符串类型名）
         const params = {
             name: peq.name,
@@ -227,7 +229,10 @@ class Luxsin {
             model: peq.model,
         };
         const payload = JSON.stringify({ peqChange: params });
+        console.log("payload", payload);
         const body    = `json=${encodeCustomBase64(payload)}`;
+        // body=json=nEVikJRPNSRgk5erAwbrOvRckHU8UuyyNImqjJCpd5G2l0ZunHKcUQVENImxmMLUNImxUQkEkJR4kI2snHUbUvkyOTGulwYrAuc9UwG2lSerAsebUvkEkJR4kI2snHU8YFUbUvmqNI1rAsUgZHirlHU8YM10oHD9UwG2lSerAsCbUvkEkJR4kI2snHU8ZsKbUvmqNI1rAsUgZHirlHU8YJ3bnEV3nJLuUsx3XMVvlvfDmIfgj0trAsQDYMirk5RyOrU8YH14XMVDUsxDXsV6XTbrmTuikHU8ZMirkwVulJfuOvZ2UsxEAPKbUvmqNI1rAr3FXMVDUsxDoHD9UwG2lSerAsCbUvkEkJR4kI2snHU8ZFKiXMVwjIugUsxcYHirlHU8YH13oHD9UwG2lSerAsCbUvkEkJR4kI2snHU8YsKiYMirk5RyOrU8YrirlHU8Yw3bnEV3nJLuUsx3XMVvlvfDmIfgj0trAsCiYPKbUvmqNI1rAsUbUwQrAsUgZJ3bnEV3nJLuUsx3XMVvlvfDmIfgj0trAse4YPKbUvmqNI1rAr3DXsebUwQrAsZ6XTbrmTuikHU8ZMirkwVulJfuOvZ2Usx1YPKiXMVwjIugUsxcYH14XMVDUsxEXsf6XTbrmTuikHU8ZrirkwVulJfuOvZ2UsxDYPKiYMirk5RyOrU8YE14XMVDUsxiXsm6JHirlTVujI4iUsxcZH14XMVsjI2QkIirAsQbUvR4mS6ClverAsKbUvVEjI2tUsxrIvuyk5RqmMUbUv4hkSfbUsxrd5G2l0ZunHV6oC==
+        console.log("body", body);
         const url     = `${this.baseUrl}/dev/info.cgi`;
         await this._fetch(url, {
             method:  "POST",

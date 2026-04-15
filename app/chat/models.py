@@ -1,5 +1,6 @@
 from datetime import datetime
-from sqlmodel import Field, SQLModel, Relationship, Column, DateTime, JSON, Text, asc
+
+from sqlmodel import JSON, Field, SQLModel, Relationship, Column, DateTime, SmallInteger, Text, asc
 
 import uuid
 
@@ -9,6 +10,7 @@ class Chat(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     title: str = Field(default="New Chat", nullable=False)
     mac: str = Field(nullable=False)
+    total_token_used: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(sa_column=Column(DateTime, default=datetime.now, onupdate=datetime.now))
 
@@ -20,22 +22,27 @@ class Chat(SQLModel, table=True):
             "cascade": "all, delete-orphan", 
             "order_by": lambda: asc(Message.created_at),
         })
+   
 
 class Message(SQLModel, table=True):
     __tablename__ = "ai_message"
     
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    # 使用 foreign_key= 字符串；勿使用 Field(ForeignKey(...)) 作为首参，否则 Relationship 无法识别外键
-    # 必须与 Chat.__tablename__ 一致（此处为 ai_chat），不能写 chat.id
     chat_id: uuid.UUID = Field(foreign_key="ai_chat.id", nullable=False)
-    # 使用 str 而非 Literal：SQLModel 映射 Literal 到列类型时会在部分版本触发 issubclass 非 class 报错
     role: str = Field(nullable=False, max_length=16)
     content: str = Field(sa_column=Column(Text, nullable=False))
+    tokens:int = Field(default=0)
 
     summarized: bool = Field(default=False)
-    summary: str | None = Field(sa_column=Column(Text, default=None, nullable=True))
-    raw_peq: dict | None = Field(sa_column=Column(JSON, default=None, nullable=True))
-    optimized_peq: dict | None = Field(sa_column=Column(JSON, default=None, nullable=True))
+
+    type: int = Field(sa_column=Column(SmallInteger, default=0, comment="0:默认消息,1:摘要消息,2:优化消息"))
+
+    # 优化结果
+    before_peq: dict | None = Field(sa_column=Column(JSON, nullable=True))
+    after_peq: dict | None = Field(sa_column=Column(JSON, nullable=True))
+    # 是否应用
+    applied: bool = Field(default=False)
+    applied_at: datetime | None = Field(default=None, nullable=True)
 
     created_at: datetime = Field(default_factory=datetime.now)
 

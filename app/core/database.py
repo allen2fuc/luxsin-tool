@@ -1,5 +1,6 @@
 
 
+from contextlib import asynccontextmanager
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -16,3 +17,8 @@ async def init_db():
     async with async_engine.begin() as conn:
         from app.chat.models import Chat, Message
         await conn.run_sync(SQLModel.metadata.create_all)
+
+@asynccontextmanager
+async def get_db_cm():
+    async with async_session() as session:
+        yield session

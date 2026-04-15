@@ -21,8 +21,15 @@ class MessageRead(BaseModel):
     id: uuid.UUID
     role: Literal["user", "assistant"]
     content: str
-    raw_peq: dict | None
-    optimized_peq: dict | None
-    summary: str | None
-    summarized: bool
     created_at: datetime
+    type: int
+
+
+class OptimizationRecordRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    created_at: datetime
+    before_peq: dict
+    after_peq: dict
+    applied: bool

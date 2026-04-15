@@ -15,8 +15,63 @@ TOOLS = [
         "name": "optimize_eq",
         "description": "优化EQ，根据用户需求优化EQ，返回优化后的EQ参数。",
         "input_schema": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "EQ名称，由brand和model合并而成。优化后参数可以加后缀装饰区分。"
+                },
+                "brand": {
+                    "type": "string",
+                    "description": "主板名称，如：7Hz"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "型号名称，如：Salnotes Dioko"
+                },
+                "filters": {
+                    "type": "array",
+                    "description": "滤波器列表：10个滤波器",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {
+                                "type": "integer",
+                                "description": "滤波器类型：LOW_PASS/LPF=0,HIGH_PASS/HPF=1,BAND_PASS/BPF=2,NOTCH=3,PEAKING/PEAK=4,LOW_SHELF/LSHELF=5,HIGH_SHELF/HSHELF=6,ALL_PASS/APF=7",
+                                "enum": [0, 1, 2, 3, 4, 5, 6, 7],
+                            },
+                            "fc": {
+                                "type": "number",
+                                "description": "FREQ：中心频率，范围1～20000Hz",
+                            },
+                            "gain": {
+                                "type": "number",
+                                "description": "增益值：-15.0～15.0dB",
+                            },
+                            "q": {
+                                "type": "number",
+                                "description": "Q值：范围0.1～10.0dB",
+                            }
+                        },
+                        "required": ["type", "fc", "gain", "q"],
+                    }
+                },
+                "preamp": {
+                    "type": "number",
+                    "description": "总增益：-15.0～15.0dB"
+                },
+                "canDel": {
+                    "type": "integer",
+                    "description": "是否可以删除：0=不能删除 1=能删除，默认生成时可以删除"
+                },
+                "autoPre": {
+                    "type": "integer",
+                    "description": "是否自动预设：0=不能自动预设 1=能自动预设，默认生成时不自动预设"
+                }
+            },
+            "required": ["name", "brand", "model", "filters", "preamp", "canDel", "autoPre"],
         },
+        "_executor": "backend",
     },
     {
         "name": "get_device_settings",
@@ -24,6 +79,7 @@ TOOLS = [
         "input_schema": {
             "type": "object",
         },
+        "_executor": "frontend",
     },
     {
         "name": "set_device_settings",
@@ -197,7 +253,8 @@ TOOLS = [
                 },
             },
             "required": [],
-        }
+        },
+        "_executor": "frontend",
     },
     {
         "name": "get_peq_list",
@@ -205,6 +262,7 @@ TOOLS = [
         "input_schema": {
             "type": "object",
         },
+        "_executor": "frontend",
     },
     {
         "name": "get_current_peq",
@@ -212,6 +270,7 @@ TOOLS = [
         "input_schema": {
             "type": "object",
         },
+        "_executor": "frontend",
     },
     {
         "name": "set_peq",
@@ -273,6 +332,7 @@ TOOLS = [
             },
             "required": ["name", "brand", "model", "filters", "preamp", "canDel", "autoPre"],
         },
+        "_executor": "frontend",
     },
     {
         "name": "delete_peqs",
@@ -288,8 +348,14 @@ TOOLS = [
             },
             "required": ["names"],
         },
+        "_executor": "frontend",
     },
 ]
+
+FRONTEND_TOOLS = {t["name"] for t in TOOLS if t.get("_executor") == "frontend"}
+BACKEND_TOOLS  = {t["name"] for t in TOOLS if t.get("_executor") == "backend"}
+
+anthropic_tools = [{k: v for k, v in t.items() if not k.startswith("_")} for t in TOOLS]
 
 FUNCTION_MAP = {
     "get_device_settings": get_device_settings,
@@ -301,7 +367,7 @@ FUNCTION_MAP = {
 }
 
 AI_SYSTEM_PROMPT = Template("""
-你是 Luxsin 音频设备的智能助手，负责帮助用户查询和控制设备。
+你是 ${device} 音频设备的智能助手，负责帮助用户查询和控制设备。
 
 ## 基本规则
 - 语言：始终使用 ${language} 回复
@@ -432,11 +498,12 @@ AI_EQ_OPTIMIZE_PROMPT = """
 ## 输出格式（信息充足时严格遵守）
 只输出 JSON，不附加任何说明文字、代码块标记、注释。
 字段说明（仅供参考，不要出现在输出中）：
+- name：必须使用英文，格式为 "<Brand> <Model> - <Style>"，风格描述也须为英文
 - preamp：总预增益，用于补偿所有滤波器叠加后的电平，范围 -15.0 ~ 15.0
 - canDel / autoPre：保持与原始 EQ 数据一致；若无原始数据，默认均为 0
 
 {
-  "name": "<品牌> <型号> - <优化风格，如 Harman Target / Bass Boost>",
+  "name": "<Brand> <Model> - <Optimization style in English, e.g. Harman Target / Bass Boost>",
   "brand": "<用户提供的品牌名>",
   "model": "<用户提供的型号名>",
   "preamp": <数字，-15.0 ~ 15.0>,
