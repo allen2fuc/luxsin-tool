@@ -2,19 +2,16 @@
 
 from datetime import datetime, timedelta
 import uuid
-from sqlmodel import delete, func, select, update
+from sqlmodel import delete, func, select, update, or_, and_
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.chat.schemas import ConfigCreate
+from .models import Chat, Message
+from .constants import MessageType
 
-from .models import Config, Chat, Message
-
-async def create_chat(chat: Chat, db: AsyncSession, commit: bool = True, refresh: bool = False) -> Chat:
+async def create_chat(chat: Chat, db: AsyncSession) -> Chat:
     db.add(chat)
-    if commit:
-        await db.commit()
-    if commit and refresh:
-        await db.refresh(chat)
+    await db.commit()
+    await db.refresh(chat)
     return chat
 
 async def update_chat_title(chat_id: uuid.UUID, title: str, db: AsyncSession) -> None:
@@ -36,7 +33,6 @@ async def get_chat(id: uuid.UUID, db: AsyncSession):
 async def delete_chat(id: uuid.UUID, db: AsyncSession):
     chat = await db.get(Chat, id)
     if chat:
-        # await delete_chat_messages(chat.id, db, commit=False)
         chat.deleted = True
         chat.deleted_at = datetime.now()
         await db.commit()
@@ -64,7 +60,10 @@ async def create_message_batch(messages: list[Message], db: AsyncSession):
     await db.commit()
 
 async def get_chat_messages(chat_id: uuid.UUID, db: AsyncSession):
-    stmt = select(Message).where(Message.chat_id == chat_id, Message.type == 0).order_by(Message.created_at.asc())
+    stmt = select(Message).where(
+        Message.chat_id == chat_id, 
+        or_(Message.type == MessageType.DEFAULT, and_(Message.type == MessageType.OPTIMIZING, Message.before_peq.isnot(None), Message.after_peq.isnot(None)))
+    ).order_by(Message.created_at.asc())
     result = await db.exec(stmt)
     return result.all()
 
@@ -83,9 +82,9 @@ async def update_message_summary(message_id: uuid.UUID, summary: str, db: AsyncS
     return None
 
 # 统计mac下最近4个小时的消耗
-async def get_recent_consumption(mac: str, db: AsyncSession, hours: int = 4):
+async def get_recent_consumption(mac: str, db: AsyncSession, hours: int = 4) -> int:
     stmt = (
-        select(func.sum(Message.tokens).label("total_tokens"))
+        select(func.sum(Message.tokens))
         .join(Chat, Message.chat_id == Chat.id)
         .where(
             Chat.mac == mac,
@@ -93,12 +92,18 @@ async def get_recent_consumption(mac: str, db: AsyncSession, hours: int = 4):
         )
     )
     result = await db.exec(stmt)
-    return result.one()
+    return result.one() or 0
 
 
 # 获取优化记录列表根据chat_id
 async def get_optimization_records(chat_id: uuid.UUID, db: AsyncSession):
-    stmt = select(Message).join(Chat, Message.chat_id == Chat.id).where(Message.chat_id == chat_id, Chat.deleted == False, Message.type == 2, Message.before_peq.isnot(None), Message.after_peq.isnot(None)).order_by(Message.created_at.desc())
+    stmt = select(Message).join(Chat, Message.chat_id == Chat.id).where(
+        Message.chat_id == chat_id, 
+        Chat.deleted == False, 
+        Message.type == MessageType.OPTIMIZING, 
+        Message.before_peq.isnot(None), 
+        Message.after_peq.isnot(None)
+    ).order_by(Message.created_at.desc())
     result = await db.exec(stmt)
     return result.all()
 
@@ -109,31 +114,3 @@ async def update_message_applied(message_id: uuid.UUID, applied: bool, db: Async
         message.applied_at = datetime.now()
         await db.commit()
     return None
-
-
-async def create_config(config_data: dict, db: AsyncSession):
-    config = Config(**config_data)  
-    db.add(config)
-    await db.commit()
-    await db.refresh(config)
-    return config
-
-async def get_config_by_mac(mac: str, db: AsyncSession):
-    stmt = select(Config).where(Config.mac == mac)
-    result = await db.exec(stmt)
-    return result.one_or_none()
-
-async def update_config(config_id: uuid.UUID, update_data: dict, db: AsyncSession):
-    config = await db.get(Config, config_id)
-    if config:
-        for key, value in update_data.items():
-            setattr(config, key, value)
-        await db.commit()
-    return None
-
-async def get_or_create_config(mac: str, db: AsyncSession):
-    config = await get_config_by_mac(mac, db)
-    if not config:
-        config = ConfigCreate(mac=mac)
-        return await create_config(config.model_dump(exclude_unset=True), db)
-    return config

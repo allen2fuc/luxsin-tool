@@ -128,6 +128,14 @@
     /** 与后端 QuestionRequest.language 一致：0 EN / 1 繁体 / 2 简体 */
     const CHAT_LANGUAGE = 2;
 
+    /** 与后端 app/chat/constants.py 的 MessageType 对齐 */
+    const MESSAGE_TYPE = {
+        DEFAULT: 0,
+        SUMMARIZE: 1,
+        OPTIMIZING: 2,
+        TITLE: 3,
+    };
+
     /** 设备 MAC 缓存（与 /sse/chats 查询一致） */
     let cachedMac = null;
     /** 当前选中的会话 ID，与 QuestionRequest.chat_id 对应 */
@@ -162,7 +170,7 @@
 
     /**
      * 将数据库行转为与 renderHistoryMessage 一致的结构（content 可能是 JSON 字符串）。
-     * @param {{ role: string, content: string }} row
+     * @param {{ id?: string, role: string, content: string, type?: number, before_peq?: object|null, after_peq?: object|null, applied?: boolean, applied_at?: string|null, created_at?: string }} row
      */
     function normalizeDbRow(row) {
         const role = row.role;
@@ -177,7 +185,17 @@
                 }
             }
         }
-        return { role, content: c, type: Number(row.type ?? 0) };
+        return {
+            id: row.id,
+            role,
+            content: c,
+            type: Number(row.type ?? 0),
+            before_peq: row.before_peq || null,
+            after_peq: row.after_peq || null,
+            applied: !!row.applied,
+            applied_at: row.applied_at || null,
+            created_at: row.created_at,
+        };
     }
 
     function _fc(f) {
@@ -755,10 +773,166 @@
     }
 
     /**
+     * 渲染一条 OPTIMIZING 类型的历史消息：显示按钮，点击后 toggle A/B 对比图。
+     * @param {{ id?: string, after_peq?: object|null, before_peq?: object|null, applied?: boolean, created_at?: string }} msg
+     */
+    function renderOptimizingMessage(msg) {
+        const box = document.createElement("div");
+        box.className = "msg tool";
+        box.style.whiteSpace = "normal";
+
+        const afterName = msg.after_peq?.name || "(unnamed)";
+        const beforeName = msg.before_peq?.name || "(unnamed)";
+        const at = msg.created_at ? new Date(msg.created_at).toLocaleString() : "";
+
+        const title = document.createElement("div");
+        title.style.marginBottom = "8px";
+        box.appendChild(title);
+
+        const actions = document.createElement("div");
+        actions.style.display = "flex";
+        actions.style.gap = "8px";
+        box.appendChild(actions);
+
+        const viewBtn = document.createElement("button");
+        viewBtn.type = "button";
+        viewBtn.className = "btn-secondary";
+        viewBtn.textContent = "View comparison";
+        actions.appendChild(viewBtn);
+
+        const actionBtn = document.createElement("button");
+        actionBtn.type = "button";
+        actionBtn.className = "btn-secondary";
+        actions.appendChild(actionBtn);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = 680;
+        canvas.height = 260;
+        canvas.style.width = "100%";
+        canvas.style.display = "none";
+        canvas.style.marginTop = "8px";
+        box.appendChild(canvas);
+
+        const status = document.createElement("div");
+        status.style.opacity = "0.9";
+        status.style.marginTop = "6px";
+        box.appendChild(status);
+
+        // 根据 applied 状态刷新标题和操作按钮文案
+        const refreshStateUi = () => {
+            const stateText = msg.applied ? "应用" : "回滚";
+            title.textContent = `EQ Optimization${at ? " · " + at : ""} · ${stateText} · ${beforeName} -> ${afterName}`;
+            actionBtn.textContent = msg.applied ? "回滚" : "应用";
+        };
+        refreshStateUi();
+
+        let shown = false;
+        const redrawCanvas = async () => {
+            const ip = await getDeviceIp();
+            const device = new Luxsin(ip);
+            const currentEq = await device.currentPeq();
+            drawEqCompare(
+                canvas,
+                currentEq || {},
+                msg.after_peq || {},
+                "Current",
+                "Recommended"
+            );
+            status.textContent = `A=Current(${currentEq?.name || "current"}), B=Recommended(${afterName})`;
+        };
+
+        viewBtn.addEventListener("click", async () => {
+            if (shown) {
+                canvas.style.display = "none";
+                status.textContent = "";
+                viewBtn.textContent = "View comparison";
+                shown = false;
+                return;
+            }
+            viewBtn.disabled = true;
+            try {
+                await redrawCanvas();
+                canvas.style.display = "block";
+                viewBtn.textContent = "Hide comparison";
+                shown = true;
+            } catch (err) {
+                status.textContent = `Failed to load current EQ: ${formatDeviceToolError(err)}`;
+            } finally {
+                viewBtn.disabled = false;
+            }
+        });
+
+        actionBtn.addEventListener("click", async () => {
+            // applied=true 当前按钮是"回滚"，目标 peq = before_peq
+            // applied=false 当前按钮是"应用"，目标 peq = after_peq
+            const toApply = !msg.applied;
+            const actionLabel = toApply ? "应用" : "回滚";
+            const targetPeq = toApply ? msg.after_peq : msg.before_peq;
+
+            const ok = await confirmDeviceWrite({
+                title: toApply ? "Apply Optimized EQ" : "Rollback EQ",
+                body:
+                    `${actionLabel}该条优化记录到设备？\n\n` +
+                    `Name: ${targetPeq?.name || "(unnamed)"}\n\n` +
+                    "· Agree: write to device\n" +
+                    "· Cancel: do nothing",
+                variant: "warning",
+                okLabel: actionLabel,
+            });
+            if (!ok) return;
+
+            actionBtn.disabled = true;
+            try {
+                const ip = await getDeviceIp();
+                const device = new Luxsin(ip);
+                await device.updatePeq(targetPeq || {});
+                if (msg.id) {
+                    const res = await fetch(
+                        "/sse/update_message_applied?message_id=" +
+                            encodeURIComponent(String(msg.id)) +
+                            "&applied=" +
+                            encodeURIComponent(String(toApply)),
+                        { method: "POST" }
+                    );
+                    if (!res.ok) {
+                        throw new Error(`update_message_applied failed: HTTP ${res.status}`);
+                    }
+                }
+                msg.applied = toApply;
+                refreshStateUi();
+                if (shown) {
+                    await redrawCanvas();
+                } else {
+                    status.textContent = `已${actionLabel}。`;
+                }
+            } catch (err) {
+                status.textContent = `${actionLabel}失败: ${formatDeviceToolError(err)}`;
+            } finally {
+                actionBtn.disabled = false;
+            }
+        });
+
+        chatEl.appendChild(box);
+    }
+
+    /**
      * 将服务端单条 message 渲染到聊天区。
-     * @param {{ role: string, content: string|Array, type?: number }} msg
+     * @param {{ role: string, content: string|Array, type?: number, before_peq?: object|null, after_peq?: object|null, applied?: boolean, created_at?: string }} msg
      */
     function renderHistoryMessage(msg) {
+        if (
+            msg.type === MESSAGE_TYPE.OPTIMIZING &&
+            msg.before_peq &&
+            msg.after_peq
+        ) {
+            renderOptimizingMessage(msg);
+            return;
+        }
+        // before/after 缺失的 OPTIMIZING 消息（例如用户输入那一条）直接跳过
+        if (msg.type === MESSAGE_TYPE.OPTIMIZING) {
+            return;
+        }
+
         const role = msg.role;
         const c = msg.content;
 

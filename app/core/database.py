@@ -3,10 +3,12 @@
 from contextlib import asynccontextmanager
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncEngine
+
+from app.core.config import settings
 
 
-async_engine = create_async_engine("sqlite+aiosqlite:///sqlite.db", echo=True)
+async_engine: AsyncEngine = create_async_engine(settings.DB_URL, echo=settings.DB_ECHO)
 async_session = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
 async def get_db():
