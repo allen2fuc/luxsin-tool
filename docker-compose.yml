@@ -25,7 +25,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: luxsin-tool:latest
+    # 镜像 tag 由部署脚本传入，默认 latest；tag 通常是 git 短 SHA（如 a1b2c3d）
+    image: luxsin-tool:${IMAGE_TAG:-latest}
     container_name: luxsin-app
     restart: unless-stopped
     depends_on:

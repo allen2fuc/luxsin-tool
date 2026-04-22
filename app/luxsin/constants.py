@@ -89,7 +89,7 @@ TOOLS = [
             "properties": {
                 "volume": {
                     "type": "integer",
-                    "description": "音量：0～200，默认80",
+                    "description": "音量：0～-100,单位dB",
                 },
                 "language": {
                     "type": "integer",

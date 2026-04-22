@@ -32,10 +32,17 @@ fi
 
 SSH_OPTS=(-i "$SSH_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 
+# 镜像 tag = 当前提交的短 SHA；工作区脏时追加 -dirty 避免和干净版冲突
+IMAGE_TAG="$(git rev-parse --short=7 HEAD)"
+if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+  IMAGE_TAG="${IMAGE_TAG}-dirty"
+fi
+
 echo "[deploy] ===== start at $(date '+%F %T') ====="
 echo "[deploy] target   : $SSH_TARGET:$REMOTE_DIR"
 echo "[deploy] branch   : $BRANCH"
 echo "[deploy] commit   : $(git rev-parse --short HEAD) $(git log -1 --pretty=%s)"
+echo "[deploy] image tag: luxsin-tool:$IMAGE_TAG"
 
 # ========== 确保远端目录存在 ==========
 ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "mkdir -p '$REMOTE_DIR'"
@@ -62,7 +69,9 @@ rsync -az --delete \
   "$SSH_TARGET:$REMOTE_DIR/"
 
 # ========== 远端构建 & 重启 ==========
-ssh "${SSH_OPTS[@]}" "$SSH_TARGET" bash -s <<REMOTE
+# IMAGE_TAG 通过 ssh 的环境变量传递（不依赖远端 SendEnv/AcceptEnv 配置，直接拼命令行）
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" \
+  "IMAGE_TAG='$IMAGE_TAG' REMOTE_DIR='$REMOTE_DIR' bash -s" <<'REMOTE'
 set -euo pipefail
 cd "$REMOTE_DIR"
 
@@ -70,7 +79,18 @@ if [[ ! -f .env ]]; then
   echo "[remote] WARN: .env not found in $REMOTE_DIR (compose will likely fail)."
 fi
 
+export IMAGE_TAG
+
+echo "[remote] building image: luxsin-tool:$IMAGE_TAG"
 docker compose up -d --build
+
+# 给本次 SHA 镜像补一个 latest 别名，方便不带 IMAGE_TAG 时也能用
+docker image tag "luxsin-tool:$IMAGE_TAG" "luxsin-tool:latest"
+
+echo "[remote] current images:"
+docker images --filter=reference='luxsin-tool' --format 'table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}'
+
+echo "[remote] services:"
 docker compose ps
 REMOTE
 
