@@ -1,0 +1,57 @@
+# 公共日志配置（json-file 驱动不支持按时间，按"单文件大小 * 文件数"限制总容量）
+# 单个服务最多保留 LOG_MAX_FILE * LOG_MAX_SIZE 的日志；默认 5 * 10m = 50m
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE:-10m}"
+    max-file: "${LOG_MAX_FILE:-5}"
+    compress: "true"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: luxsin-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: luxsin-tool:latest
+    container_name: luxsin-app
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    # 允许在 .env 中覆盖默认值；docker-compose 会自动读取 .env
+    env_file:
+      - .env
+    environment:
+      # 容器里用绝对路径指向挂载卷，覆盖本地 .env 里的 DB_URL
+      DB_URL: ${DB_URL:-sqlite+aiosqlite:////app/data/sqlite.db}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    ports:
+      - "${APP_PORT:-7000}:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else sys.exit(1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+
+volumes:
+  redis-data:

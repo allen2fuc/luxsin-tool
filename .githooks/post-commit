@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# 每次 commit 后触发自动部署（后台执行，不阻塞 git commit）。
+# 要跳过本次部署：SKIP_DEPLOY=1 git commit -m "..."
+# 要改分支：DEPLOY_BRANCH=prod git commit -m "..."
+
+set -euo pipefail
+
+if [[ "${SKIP_DEPLOY:-0}" == "1" ]]; then
+  echo "[deploy] skipped (SKIP_DEPLOY=1)"
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+LOG_FILE="$REPO_ROOT/.deploy.log"
+DEPLOY_SCRIPT="$REPO_ROOT/scripts/deploy.sh"
+
+if [[ ! -x "$DEPLOY_SCRIPT" ]]; then
+  echo "[deploy] $DEPLOY_SCRIPT not executable; run 'make install-hooks'."
+  exit 0
+fi
+
+# 先做一次分支预检查，不满足直接退出（避免起后台进程又立刻打日志）
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+TARGET_BRANCH="${DEPLOY_BRANCH:-main}"
+if [[ "$BRANCH" != "$TARGET_BRANCH" ]]; then
+  echo "[deploy] skip: current branch '$BRANCH' != '$TARGET_BRANCH'"
+  exit 0
+fi
+
+# 后台执行，不阻塞本次 commit
+nohup "$DEPLOY_SCRIPT" >>"$LOG_FILE" 2>&1 &
+disown
+
+echo "[deploy] triggered in background. tail -f $LOG_FILE"

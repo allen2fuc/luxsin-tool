@@ -1,7 +1,6 @@
 import ipaddress
 import re
 from typing import Any
-import requests
 
 from .constants import FUNCTION_MAP
 
@@ -25,21 +24,6 @@ def is_accessible(ip: str) -> bool:
         return msg_count >= 0
     except Exception:
         return False
-
-def load_models(base_url: str) -> list[str]:
-    if not base_url:
-        return []
-
-    try:
-        res = requests.get(f"{base_url}/v1/models", timeout=3)
-        return [model["id"] for model in res.json()["data"]]
-    except Exception as e:
-
-        try:
-            res = requests.get(f"https://api.jiekou.ai/openai/v1/models", timeout=3)
-            return [model["id"] for model in res.json()["data"]]
-        except Exception as e:
-            return []
 
 def execute_tool(func_name: str, args: dict) -> Any:
     func = FUNCTION_MAP[func_name]

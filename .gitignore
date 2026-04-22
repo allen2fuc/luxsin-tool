@@ -15,3 +15,4 @@ sqlite.db
 requirements.txt
 logs/
 .env
+.deploy.log

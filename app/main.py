@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -7,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.database import init_db
 from app.chat import api as chat_api
 from app.core.logger import init_logger
+from app.core.middlewares import register_middlewares
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,12 +17,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+register_middlewares(app)
 
 app.include_router(chat_api.router)
+
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
