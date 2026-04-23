@@ -62,7 +62,10 @@ async def create_message_batch(messages: list[Message], db: AsyncSession):
 async def get_chat_messages(chat_id: uuid.UUID, db: AsyncSession):
     stmt = select(Message).where(
         Message.chat_id == chat_id, 
-        or_(Message.type == MessageType.DEFAULT, and_(Message.type == MessageType.OPTIMIZING, Message.before_peq.isnot(None), Message.after_peq.isnot(None)))
+        or_(
+            Message.type == MessageType.DEFAULT, 
+            and_(Message.type == MessageType.OPTIMIZING, Message.before_peq.isnot(None), Message.after_peq.isnot(None))
+        )
     ).order_by(Message.created_at.asc())
     result = await db.exec(stmt)
     return result.all()

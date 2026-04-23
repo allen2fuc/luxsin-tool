@@ -5,19 +5,19 @@ import uuid
 import anthropic
 from fastapi import Depends, Query, Request, BackgroundTasks, APIRouter
 from fastapi.responses import EventSourceResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.anthropic import anthropic_client
 from app.core.config import settings
 from app.core.database import get_db
 
 from app.core.jinja2 import templates
-from app.luxsin.constants import BACKEND_TOOLS, FRONTEND_TOOLS, anthropic_tools
 
+from .constants import anthropic_tools
 from . import crud as chat_crud
 from .models import DEFAULT_TITLE
 from .schemas import ChatRead, MessageRead, QuestionRequest, QuestionResponse, ToolResultRequest
-from .services import CONTENT_FORMATTERS, compress_context, execute_backend_tool, execute_frontend_tool, generate_title, get_content_messages, get_system_prompt, publish_tool_result, get_or_create_chat, save_ai_response, save_user_question, save_tool_result
+from .services import CONTENT_FORMATTERS, compress_context, generate_title, get_content_messages, get_system_prompt, handle_tool, print_messages, publish_tool_result, get_or_create_chat, save_ai_response, save_user_question, save_tool_result
 
 router = APIRouter()
 
@@ -62,32 +62,14 @@ async def receive_tool_result(req: ToolResultRequest):
 
     logger.info(f"receive_tool_result: {req.tool_use_id} {ok} {content} {message}")
 
-    def convert_str(c):
-        if isinstance(c, dict) or isinstance(c, list):
-            return json.dumps(c, ensure_ascii=False)
-        elif isinstance(c, str):
-            return c
-        else:
-            return str(c)
-    
-    converted_content = convert_str(content) if ok else message
-
-    tool_result = {
-        "type": "tool_result",
-        "tool_use_id": req.tool_use_id,
-        "content": converted_content,
-    }
-    if not ok:
-        tool_result["is_error"] = True
-
-    await publish_tool_result(req.tool_use_id, tool_result)
+    await publish_tool_result(req.tool_use_id, {**req.content.model_dump(exclude_none=True), "tool_use_id": req.tool_use_id})
     return {"ok": True}
 
 
 @router.post("/sse/question", response_class=EventSourceResponse)
 async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     # 创建或获取会话
-    chat = await get_or_create_chat(question.chat_id, question.mac, db)
+    chat = await get_or_create_chat(question.chat_id, question.device_setting.mac, db)
 
     # 获取上下文 messages
     messages = await get_content_messages(chat.messages)
@@ -95,23 +77,19 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
     # 将 messages 保存到数据库
     await save_user_question(chat.id, question.question, messages, db)
 
+    print_messages(messages)
+
     # 多次循环，因为可能需要工具调用多次才能完成任务
     while True:
-        # 打印 messages 用于调试
-        print("----------Begin Messages ----------")
-        for message in messages:
-            print("\t", message["role"], ":\n\t\t", message["content"])
-        print("----------End Messages ----------")
-
         # 获取系统提示词
-        system_prompt = get_system_prompt(question, messages)
+        system_prompt = get_system_prompt(question)
 
         logger.info(f"system prompt: {system_prompt[:20]}...")
 
         try:
             # 调用 AI 大模型
             async with anthropic_client.messages.stream(
-                system=system_prompt,
+                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
                 model=settings.AI_MODEL,
                 messages=messages,
                 tools=anthropic_tools,
@@ -125,6 +103,8 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                 yield QuestionResponse(type="text", content="\n")
 
                 final_message = await stream.get_final_message()
+                logger.info(f"final message: {final_message}")
+
                 usage = final_message.usage
                 tokens = usage.input_tokens + usage.output_tokens
 
@@ -137,26 +117,12 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
 
                 logger.info(f"AI Assistant Response: StopReason={final_message.stop_reason}, Length={len(contents)}, Contents={contents}")
 
-                # 将AI的回复内容保存到数据库
                 await save_ai_response(chat.id, contents, tokens, messages, db)
 
                 # 工具调用结果处理
                 if final_message.stop_reason == "tool_use":
-                    results = []
-                    for content in contents:
-                        if not content["type"] == "tool_use":
-                            continue
-                        name = content["name"]
-                        if name in BACKEND_TOOLS:
-                            result = await execute_backend_tool(content["id"],name, content["input"], chat.id, db)
-                            results.append(result.model_dump(exclude_none=True))
-                        elif name in FRONTEND_TOOLS:
-                            yield QuestionResponse(type="tool_use", content=content)
-                            result = await execute_frontend_tool(content["id"])
-                            results.append(result.model_dump(exclude_none=True))
-                    await save_tool_result(chat.id, results, messages, db)
-
-                    logger.info(f"save tool result. chat_id={chat.id}")
+                    async for tool_request in handle_tool(contents, chat, messages, db, question):
+                        yield QuestionResponse(type="tool_use", content=tool_request)
                 elif final_message.stop_reason == "max_tokens":
                     logger.warning(f"Response was cut off at token limit. chat_id={chat.id}")
                     break
@@ -178,11 +144,17 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                     tokens = usage.input_tokens + usage.output_tokens
                     if tokens >= settings.SUMMARY_MAX_TOKENS or len(messages) >= settings.SUMMARY_MAX_MESSAGES:
                         logger.info(f"compress_context: chat_id={chat.id}, tokens={tokens}, messages={len(messages)}")
-                        background_tasks.add_task(compress_context, chat.id, messages, question.language)
+                        background_tasks.add_task(
+                            compress_context, chat.id, messages, question.device_setting.language
+                        )
 
                     if chat.title == DEFAULT_TITLE:
                         background_tasks.add_task(
-                            generate_title, chat.id, messages, question.language, question.device)
+                            generate_title,
+                            chat.id,
+                            messages,
+                            question.device_setting.language,
+                        )
                     break
 
         except anthropic.APITimeoutError as e:

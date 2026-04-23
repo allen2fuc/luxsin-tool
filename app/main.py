@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.database import init_db
 from app.chat import api as chat_api
+from app.core.exceptions import register_exception_handler
 from app.core.logger import init_logger
 from app.core.middlewares import register_middlewares
 
@@ -18,6 +19,7 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 register_middlewares(app)
+register_exception_handler(app)
 
 app.include_router(chat_api.router)
 

@@ -8,15 +8,16 @@ import uuid
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 import json
-from typing import Protocol
+# from typing import Protocol
 
 from app.chat.constants import MessageRole, MessageRole
 from app.core.anthropic import anthropic_client
 from app.core.config import settings
 from app.core.database import get_db_cm
 from app.core.redis import redis_client
-from app.luxsin.constants import AI_EQ_ANALYZE_PROMPT, AI_EQ_OPTIMIZE_PROMPT, AI_SUMMARY_TEXT_PROMPT, AI_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, LANGUAGE_NAME
+from app.luxsin.constants import LANGUAGE_NAME
 
+from .constants import AI_SUMMARY_TEXT_PROMPT, AI_SYSTEM_PROMPT, BACKEND_TOOLS, FRONTEND_TOOLS, GENERATE_TITLE_PROMPT
 from . import crud as chat_crud
 from .models import DEFAULT_TITLE, Chat, Message
 from .schemas import MessagePayload, QuestionRequest, ToolResult
@@ -30,77 +31,132 @@ class Result(BaseModel):
     content: str | None = None
     message: str | None = None
 
+class BackendToolRequest(BaseModel):
+    """后端工具入参；不要放入 AsyncSession，否则 Pydantic 无法生成 schema。"""
 
-class BackendTool(Protocol):
-    async def __call__(self, tool_input: dict, chat_id: uuid.UUID, db: AsyncSession) -> Result:
-        ...
+    chat_id: uuid.UUID
+    fn_id: str
+    fn_name: str
+    fn_input: dict
+    messages: list
+    question: QuestionRequest
+
+# class BackendTool(Protocol):
+#     async def __call__(self, request:BackendToolRequest) -> Result:
+#         ...
+
+
+def extract_text_context(messages: list[MessagePayload], limit: int = 6) -> list[MessagePayload]:
+    """
+    过滤工具调用相关内容，仅保留用户与助手的文本上下文。
+    """
+    cleaned_messages: list[MessagePayload] = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+
+        if role not in (MessageRole.USER, MessageRole.ASSISTANT):
+            continue
+
+        if isinstance(content, str):
+            text = content.strip()
+            if text:
+                cleaned_messages.append(MessagePayload(role=role, content=text))
+            continue
+
+        if isinstance(content, list):
+            text_blocks: list[str] = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = str(block.get("text", "")).strip()
+                    if text:
+                        text_blocks.append(text)
+            if text_blocks:
+                cleaned_messages.append(
+                    MessagePayload(role=role, content="\n".join(text_blocks))
+                )
+
+    return cleaned_messages[-limit:] if limit > 0 else cleaned_messages
+
 
 # 优化EQ的后端工具
-class OptimizeEqBackendTool:
-    async def __call__(self, tool_input: dict, chat_id: uuid.UUID, db: AsyncSession) -> Result:
-        user_input_message = f"My current PEQ settings:\n{json.dumps(tool_input, indent=2, ensure_ascii=False)}\n\nPlease help optimize this EQ."
-        user_message = [MessagePayload(role=MessageRole.USER, content= user_input_message)]
+# class OptimizeEqBackendTool:
+#     async def __call__(self, request:BackendToolRequest) -> Result:
+#         user_input_message = (
+#             "Input context for EQ optimization:\n"
+#             f"{json.dumps(request.tool_input, indent=2, ensure_ascii=False)}\n\n"
+#             "Please generate an optimized PEQ JSON."
+#         )
 
-        try:
+#         # 控制上下文长度，减少噪音和 token 消耗
+#         new_messages = extract_text_context(request.messages, limit=6)
+#         new_messages.append(MessagePayload(role=MessageRole.USER, content=user_input_message))
 
-            resp = await anthropic_client.messages.create(
-                system=AI_EQ_OPTIMIZE_PROMPT,
-                model=settings.AI_MODEL,
-                messages=user_message,
-                max_tokens=settings.OPTIMIZE_EQ_MAX_TOKENS,
-                output_config={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "brand": {"type": "string"},
-                                "model": {"type": "string"},
-                                "filters": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "type": {"type": "integer"},
-                                            "fc": {"type": "number"},
-                                            "gain": {"type": "number"},
-                                            "q": {"type": "number"},
-                                        },
-                                        "required": ["type", "fc", "gain", "q"],
-                                        "additionalProperties": False,
-                                    },
-                                },
-                                "preamp": {"type": "number"},
-                                "canDel": {"type": "number"},
-                                "autoPre": {"type": "number"},
-                            },
-                            "required": ["name", "brand", "model", "filters", "preamp", "canDel", "autoPre"],
-                            "additionalProperties": False,
-                        },
-                    }
-                },
-            )
+#         print_messages(new_messages)
 
-            result = resp.content[0].text if resp.content else "{}"
-            optimized_peq = json.loads(result) if result else {}
+#         try:
 
-            db_messages = [
-                Message(chat_id=chat_id, role="user", content=user_input_message, tokens=resp.usage.input_tokens, type=MessageType.OPTIMIZING),
-                Message(chat_id=chat_id, role="assistant", content=result, tokens=resp.usage.output_tokens, type=MessageType.OPTIMIZING, before_peq=tool_input, after_peq=optimized_peq),
-            ]
+#             resp = await anthropic_client.messages.create(
+#                 system=[
+#                     {"type": "text", "text": AI_EQ_OPTIMIZE_PROMPT, "cache_control": {"type": "ephemeral"}},
+#                 ],
+#                 model=settings.AI_MODEL,
+#                 messages=new_messages,
+#                 max_tokens=settings.OPTIMIZE_EQ_MAX_TOKENS,
+#                 output_config={
+#                     "format": {
+#                         "type": "json_schema",
+#                         "schema": {
+#                             "type": "object",
+#                             "properties": {
+#                                 "name": {"type": "string"},
+#                                 "brand": {"type": "string"},
+#                                 "model": {"type": "string"},
+#                                 "filters": {
+#                                     "type": "array",
+#                                     "items": {
+#                                         "type": "object",
+#                                         "properties": {
+#                                             "type": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5, 6, 7]},
+#                                             "fc": {"type": "number", "minimum": 1, "maximum": 20000},
+#                                             "gain": {"type": "number", "minimum": -15, "maximum": 15},
+#                                             "q": {"type": "number", "minimum": 0.1, "maximum": 10},
+#                                         },
+#                                         "required": ["type", "fc", "gain", "q"],
+#                                         "additionalProperties": False,
+#                                     },
+#                                     "maxItems": 10,
+#                                 },
+#                                 "preamp": {"type": "number"},
+#                                 "canDel": {"type": "number", "enum": [0, 1]},
+#                                 "autoPre": {"type": "number", "enum": [0, 1]},
+#                             },
+#                             "required": ["name", "brand", "model", "filters", "preamp", "canDel", "autoPre"],
+#                             "additionalProperties": False,
+#                         },
+#                     }
+#                 },
+#             )
 
-            await chat_crud.create_message_batch(db_messages, db)
+#             result = resp.content[0].text if resp.content else "{}"
+#             optimized_peq = json.loads(result) if result else {}
 
-            return Result(ok=True, content=result)
-        except Exception as e:
-            logger.exception(e)
-            return Result(ok=False, message="Tool execution failed, error reason: " + str(e))
+#             db_messages = [
+#                 Message(chat_id=request.chat_id, role="user", content=user_input_message, tokens=resp.usage.input_tokens, type=MessageType.OPTIMIZING),
+#                 Message(chat_id=request.chat_id, role="assistant", content=result, tokens=resp.usage.output_tokens, type=MessageType.OPTIMIZING, before_peq=tool_input, after_peq=optimized_peq),
+#             ]
+
+#             await chat_crud.create_message_batch(db_messages, request.db)
+
+#             return Result(ok=True, content=result)
+#         except Exception as e:
+#             logger.exception(e)
+#             return Result(ok=False, message="Tool execution failed, error reason: " + str(e))
 
 
-BACKEND_TOOLS_MAP = {
-    "optimize_eq": OptimizeEqBackendTool(),
-}
+# BACKEND_TOOLS_MAP = {
+#     "optimize_eq": OptimizeEqBackendTool(),
+# }
 
 def _format_tool_use(block) -> dict:
     return {
@@ -121,23 +177,16 @@ CONTENT_FORMATTERS = {
     "text": _format_text,
 }
 
-async def execute_backend_tool(result_id:str, name: str, tool_input: dict, chat_id: uuid.UUID, db: AsyncSession) -> ToolResult:
-    tool_fn = BACKEND_TOOLS_MAP.get(name)
-    if tool_fn:
-        result: Result = await tool_fn(tool_input, chat_id, db)
-        logger.info(f"Tool {name} result: {result}")
+async def execute_backend_tool(request: BackendToolRequest) -> ToolResult:
+    if request.fn_name in BACKEND_TOOLS_FUNC:
+        result: str = BACKEND_TOOLS_FUNC[request.fn_name](request.question)
+        return ToolResult(tool_use_id=request.fn_id, content=result)
+    return ToolResult(tool_use_id=request.fn_id, content="Tool not found", is_error=True)
 
-        if result.ok:
-            return ToolResult(tool_use_id=result_id, content=result.content)
-        else:
-            return ToolResult(tool_use_id=result_id, content=result.message, is_error=True)
-
-    return ToolResult(tool_use_id=result_id, content="Tool not found", is_error=True)
-
-async def execute_frontend_tool(result_id:str) -> ToolResult:
+async def execute_frontend_tool(result_id:str) -> dict:
     result = await wait_for_frontend_result(result_id, timeout=settings.WAIT_FOR_FRONTEND_RESULT_TIMEOUT)
     logger.info(f"Frontend tool result: {result}")
-    return ToolResult(**result)
+    return result
 
 async def wait_for_frontend_result(tool_use_id: str, timeout: int) -> dict:
     channel = f"tool_result:{tool_use_id}"
@@ -166,32 +215,14 @@ async def wait_for_frontend_result(tool_use_id: str, timeout: int) -> dict:
 
 
 
-def get_system_prompt(question: QuestionRequest, messages: list) -> str:
-    
-    index = 0
-    for i in range(len(messages)-1, -1, -1):
-        if index > 3:  # 最多往前看5条消息
-            break
-
-        content = messages[i]["content"]
-        role = messages[i]["role"]
-
-        if role == "assistant" and isinstance(content, list):
-            for block in content:
-                if block.get("type") != "tool_use":
-                    continue
-                tool_name = block.get("name")
-                if tool_name == "optimize_eq":
-                    return AI_EQ_OPTIMIZE_PROMPT
-                elif tool_name == "get_current_peq":
-                    return AI_EQ_ANALYZE_PROMPT.substitute(language=LANGUAGE_NAME[question.language])
-
-        index+=1
-
-    return AI_SYSTEM_PROMPT.substitute(language=LANGUAGE_NAME[question.language], device=question.device)
+def get_system_prompt(question: QuestionRequest) -> str:
+    return AI_SYSTEM_PROMPT.substitute(
+        language=get_language_name(question.device_setting.language), 
+        device=question.device_setting.device
+    )
 
 
-async def generate_title(chat_id: uuid.UUID, messages: list, language: int, device: str) -> None:
+async def generate_title(chat_id: uuid.UUID, messages: list, language: int) -> None:
     try:
         generate_title_prompt = GENERATE_TITLE_PROMPT.substitute(language=LANGUAGE_NAME[language])
 
@@ -208,7 +239,9 @@ async def generate_title(chat_id: uuid.UUID, messages: list, language: int, devi
         user_message = [MessagePayload(role=MessageRole.USER, content=user_input_message)]
 
         resp = await anthropic_client.messages.create(
-            system=generate_title_prompt,
+            system=[
+                {"type": "text", "text": generate_title_prompt, "cache_control": {"type": "ephemeral"}},
+            ],
             model=settings.AI_MODEL,
             messages=user_message,
             max_tokens=10,
@@ -247,8 +280,6 @@ async def publish_tool_result(tool_use_id: str, content: dict):
     channel = f"tool_result:{tool_use_id}"
     await redis_client.set(channel, json.dumps(content, ensure_ascii=False), ex=settings.CACHE_TOOL_RESULT_TIMEOUT)
     await redis_client.publish(channel, "ready")
-
-
 
 def repair_messages(messages: list) -> list:
     """
@@ -362,8 +393,6 @@ async def get_content_messages(db_messages: list):
             content = convert_db_data_to_ai(msg.content)
             raw_messages.append(MessagePayload(role=msg.role, content=content))
 
-    logger.info(f"raw_messages: {raw_messages}")
-
     # ---------- 修复 messages 中的数据丢失或中断 ----------
     messages = repair_messages(raw_messages)
 
@@ -386,7 +415,9 @@ async def compress_context(chat_id: uuid.UUID, messages: list, language: int) ->
     try:
         resp = await anthropic_client.messages.create(
             model=settings.AI_MODEL,
-            system=summary_prompt,
+            system=[
+                {"type": "text", "text": summary_prompt, "cache_control": {"type": "ephemeral"}},
+            ],
             messages=messages,
             max_tokens=settings.SUMMARY_MAX_TOKENS,
         )
@@ -400,19 +431,36 @@ async def compress_context(chat_id: uuid.UUID, messages: list, language: int) ->
     except Exception as e:
         logger.exception(e)    
 
-async def save_ai_response(chat_id: uuid.UUID, ai_response: list, tokens: int, messages: list, db: AsyncSession):
-    await save_message(chat_id, MessageRole.ASSISTANT, ai_response, db, tokens)
+async def save_ai_response(chat_id: uuid.UUID, ai_response: list, tokens: int, messages: list, db: AsyncSession, message_type: MessageType = MessageType.DEFAULT):
+    await save_message(chat_id, MessageRole.ASSISTANT, ai_response, db, tokens, message_type)
     messages.append(MessagePayload(role=MessageRole.ASSISTANT, content=ai_response))
 
 async def save_user_question(chat_id: uuid.UUID, question: str | list, messages: list, db: AsyncSession):
     await save_message(chat_id, MessageRole.USER, question, db)
     messages.append(MessagePayload(role=MessageRole.USER, content=question))
 
-async def save_tool_result(chat_id: uuid.UUID, tool_result: list, messages: list, db: AsyncSession):
-    await save_message(chat_id, MessageRole.USER, tool_result, db)
-    messages.append(MessagePayload(role=MessageRole.USER, content=tool_result))
+async def save_tool_result(
+    chat_id: uuid.UUID, 
+    tool_results: list[ToolResult], 
+    messages: list, 
+    db: AsyncSession,
+    before_peq: dict | None = None,
+    after_peq: dict | None = None,
+    applied: bool = False
+):
+    tool_results_list = [result.model_dump(exclude_none=True) for result in tool_results]
+    logger.info(f"save_tool_result: {tool_results_list}")
+    await save_message(chat_id, MessageRole.USER, tool_results_list, db, before_peq=before_peq, after_peq=after_peq, applied=applied)
+    messages.append(MessagePayload(role=MessageRole.USER, content=tool_results_list))
 
-async def save_message(chat_id: uuid.UUID, role: MessageRole, content: list | str, db: AsyncSession, tokens: int=0, type: MessageType = MessageType.DEFAULT):
+async def save_message(
+    chat_id: uuid.UUID, role: MessageRole, content: list | str, 
+    db: AsyncSession, tokens: int=0, 
+    type: MessageType = MessageType.DEFAULT,
+    before_peq: str = None,
+    after_peq: str = None,
+    applied: bool = False
+):
     msg: str = json.dumps(content, ensure_ascii=False) if isinstance(content, list) else content
 
     message = Message(
@@ -420,6 +468,121 @@ async def save_message(chat_id: uuid.UUID, role: MessageRole, content: list | st
         role=role, 
         content=msg, 
         tokens=tokens,
-        type=type
+        type=type,
+        before_peq=before_peq,
+        after_peq=after_peq,
+        applied=applied
     )
     await chat_crud.create_message(message, db)
+
+def get_language_name(language:int):
+    """获取语言名称"""
+    return LANGUAGE_NAME[language]
+
+def print_messages(messages: list):
+    print("----------Begin Messages ----------")
+    for message in messages:
+        print("\t", message["role"], ":\n\t\t", message["content"])
+    print("----------End Messages ----------")
+
+
+
+
+
+
+
+
+
+
+
+
+
+def get_device_setting(question: QuestionRequest) -> str:
+    return question.device_setting.model_dump_json()
+
+def get_peq_list(question: QuestionRequest) -> str:
+    return json.dumps([peq.name for peq in question.device_peq.peq], ensure_ascii=False)
+
+def get_current_peq(question: QuestionRequest) -> str:
+    index = question.device_peq.peqSelect
+    return question.device_peq.peq[index].model_dump_json()
+
+BACKEND_TOOLS_FUNC = {
+    "get_device_setting": get_device_setting,
+    "get_peq_list": get_peq_list,
+    "get_current_peq": get_current_peq
+}
+
+
+
+
+
+async def handle_tool(contents: list[dict], chat: Chat, messages: list, db: AsyncSession, question: QuestionRequest):
+    results = []
+
+    before_peq: dict | None = None
+    after_peq: dict | None = None
+
+    for content in contents:
+        content_type = content["type"]
+        if not content_type == "tool_use":
+            continue
+        fn_name = content["name"]
+        fn_id = content["id"]
+        fn_input = content["input"]
+        if fn_name in BACKEND_TOOLS:
+            result = await execute_backend_tool(
+                BackendToolRequest(
+                    chat_id=chat.id,
+                    fn_id=fn_id,
+                    fn_name=fn_name,
+                    fn_input=fn_input,
+                    messages=messages,
+                    question=question,
+                )
+            )
+            results.append(result)
+        elif fn_name in FRONTEND_TOOLS:
+
+            if fn_name == "set_peq":
+                # 不下发到前端写设备：before/after 落库，由 UI A/B 与用户点击「应用」再调用设备 API
+                before_peq = json.loads(get_current_peq(question))
+                after_peq = fn_input if isinstance(fn_input, dict) else {}
+                result = ToolResult(
+                    type="tool_result",
+                    tool_use_id=fn_id,
+                    content=json.dumps(
+                        {
+                            "ok": True,
+                            "message": "PEQ pending user confirmation (A/B); not written to device yet.",
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+                results.append(result)
+            else:
+                result = await execute_frontend_tool(fn_id)
+                yield content
+                results.append(handle_tool_result(result))
+
+    await save_tool_result(chat.id, results, messages, db, before_peq=before_peq, after_peq=after_peq)
+
+def handle_tool_result(payload: dict) -> dict:
+    ok = payload.get("ok", False)
+    content = payload.get("content")
+    message = payload.get("message")
+    tool_use_id = payload.get("tool_use_id")
+
+    if not ok:
+        content = message
+
+    def convert_str(c):
+        return json.dumps(c, ensure_ascii=False) if isinstance(c, dict) else str(c)
+    
+    is_error = None if ok else True
+    return ToolResult(
+        type="tool_result", 
+        tool_use_id=tool_use_id, 
+        content=convert_str(content), 
+        is_error=is_error
+    )

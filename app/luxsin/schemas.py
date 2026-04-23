@@ -6,7 +6,7 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, Field
 
 
 class DeviceSetting(BaseModel):
-    volume: Annotated[int, Field(default=80, ge=0, le=200, description="音量：0～200，默认80")]
+    volume: Annotated[int, Field(default=80, ge=0, le=200, description="音量：0～200,展示需要换算(volume-200)/2,存储需要换算回来volume*2+200")]
     language: Annotated[int, Field(ge=0, le=2, description="语言：0=英语 1=繁体 2=简体")]
 
     # IO
@@ -134,7 +134,7 @@ def round_float(value: float) -> float:
 class Filter(BaseModel):
     type: Annotated[int, Field(..., ge=0, le=7, description="滤波器类型：LOW_PASS/LPF=0,HIGH_PASS/HPF=1,BAND_PASS/BPF=2,NOTCH=3,PEAKING/PEAK=4,LOW_SHELF/LSHELF=5,HIGH_SHELF/HSHELF=6,ALL_PASS/APF=7"), BeforeValidator(parse_filter_type)]
     fc: Annotated[float, Field(..., ge=1, le=20000, description="FREQ：中心频率，范围1～20000Hz")]
-    gain: Annotated[float, Field(..., ge=-15.0, le=15.0, description="增益值：-15.0～15.0dB")]
+    gain: Annotated[float, Field(..., ge=-20.0, le=20.0, description="增益值：-15.0～15.0dB")]
     q: Annotated[float, Field(..., ge=0.1, le=10.0, description="Q值：范围0.1～10.0dB")]
 
 
@@ -157,7 +157,7 @@ class PEQItem(BaseModel):
     canDel: Annotated[int, Field(default=1, ge=0, le=1, description="是否可以删除：0=不能删除 1=能删除，默认生成时可以删除")]
     autoPre: Annotated[int, Field(default=0, ge=0, le=1, description="是否自动预设：0=不能自动预设 1=能自动预设，默认生成时不自动预设")]
 
-class PEQData(BaseModel):
+class DevicePEQ(BaseModel):
     peqSelect: Annotated[int, Field(default=0, description="PEQ选择，当前选中的PEQ索引下标")]
     peqEnable: Annotated[int, Field(default=1, ge=0, le=1, description="PEQ开关：0=关闭 1=启用")]
     peq: Annotated[list[PEQItem], Field(default_factory=list, description="PEQ列表")]

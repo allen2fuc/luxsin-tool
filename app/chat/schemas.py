@@ -7,6 +7,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from app.luxsin.schemas import DeviceSetting, DevicePEQ
+
 from .constants import MessageRole, MessageType
 
 class ChatRead(BaseModel):
@@ -29,10 +31,12 @@ class MessageRead(BaseModel):
 class QuestionRequest(BaseModel):
     """question：本轮用户输入文本。"""
     question: str
-    language: int = 2  # 0 英文 1 繁体中文 2 简体中文
-    mac: str
+    # language: int = 2  # 0 英文 1 繁体中文 2 简体中文
+    # mac: str
+    # device: str
+    device_setting: DeviceSetting  # 这里可以获取到mac/device/language
+    device_peq: DevicePEQ
     chat_id: uuid.UUID | None = None
-    device: str
 
 class QuestionResponse(BaseModel):
     type: Literal["text", "done", "error", "tool_use"]
@@ -47,7 +51,6 @@ class OptimizeEqResponse(BaseModel):
 
 class ToolResultPayload(BaseModel):
     ok: bool
-    # {message/content: dict | str}
     content: dict | str | None = None
     message: str | None = None
 

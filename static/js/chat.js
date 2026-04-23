@@ -125,7 +125,7 @@
     /** 无缓存时使用的默认设备 IP */
     const DEFAULT_DEVICE_IP = "10.0.0.119";
 
-    /** 与后端 QuestionRequest.language 一致：0 EN / 1 繁体 / 2 简体 */
+    /** 与后端 DeviceSetting.language 一致：0 EN / 1 繁体 / 2 简体 */
     const CHAT_LANGUAGE = 2;
 
     /** 与后端 app/chat/constants.py 的 MessageType 对齐 */
@@ -1224,21 +1224,21 @@
 
     /**
      * body.question 为本轮用户输入字符串。
+     * body.device_setting / body.device_peq 与后端 QuestionRequest 一致（来自 device.syncData / device.syncPeq）。
      * 流式帧为 SSE，每行 data: 后为 JSON，type 为 text | tool_use | done | error。
      * 必须收到至少一次 type === "done" 才视为本轮完成；否则返回 false，调用方勿恢复发送。
-     * @param {{ question: string, language?: number }} body
+     * @param {{ question: string, device_setting: object, device_peq: object }} body
      * @param {HTMLElement} assistantLine
      * @returns {Promise<boolean>} true 表示可再次发送；false 表示未收到 done，应保持禁用发送
      */
     async function streamQuestion(body, assistantLine) {
-        const mac = await ensureMac();
         const payload = {
-            ...body,
-            mac,
+            question: body.question,
             chat_id: currentChatId,
-            language: body.language,
-            device: body.device,
+            device_setting: body.device_setting,
+            device_peq: body.device_peq,
         };
+        console.log('payload',payload);
         const response = await fetch("/sse/question", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1359,10 +1359,11 @@
         const ip = await getDeviceIp();
         const device = new Luxsin(ip);
         const deviceSettings = await device.syncData();
+        const devicePeq = await device.syncPeq();
 
         const assistantLine = addMsg("assistant", "Assistant: ");
         const canSendAgain = await streamQuestion(
-            { question, language: deviceSettings.language, device: deviceSettings.device, mac: deviceSettings.mac },
+            { question, device_setting: deviceSettings, device_peq: devicePeq },
             assistantLine
         );
         if (canSendAgain) {
