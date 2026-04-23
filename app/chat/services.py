@@ -497,7 +497,7 @@ def print_messages(messages: list):
 
 
 
-def get_device_setting(question: QuestionRequest) -> str:
+def get_device_settings(question: QuestionRequest) -> str:
     return question.device_setting.model_dump_json()
 
 def get_peq_list(question: QuestionRequest) -> str:
@@ -508,7 +508,7 @@ def get_current_peq(question: QuestionRequest) -> str:
     return question.device_peq.peq[index].model_dump_json()
 
 BACKEND_TOOLS_FUNC = {
-    "get_device_setting": get_device_setting,
+    "get_device_settings": get_device_settings,
     "get_peq_list": get_peq_list,
     "get_current_peq": get_current_peq
 }

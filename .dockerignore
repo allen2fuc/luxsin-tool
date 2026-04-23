@@ -42,3 +42,6 @@ docker-compose.yml
 Makefile
 node_modules
 requirements.txt
+
+
+.DS_Store

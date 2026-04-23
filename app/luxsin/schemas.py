@@ -61,9 +61,9 @@ class DeviceSetting(BaseModel):
     width_value: Annotated[int, Field(default=25, ge=0, le=100, description="声场宽度：0～100")]
 
     color_enable: Annotated[int, Field(ge=0, le=1, description="音调开关")]
-    color_bass_gain: Annotated[float, Field(ge=-10.0, le=10.0, description="低音增益：-10.0～10.0")]
-    color_mid_gain: Annotated[float, Field(ge=-10.0, le=10.0, description="中音增益：-10.0～10.0")]
-    color_treble_gain: Annotated[float, Field(ge=-10.0, le=10.0, description="高音增益：-10.0～10.0")]
+    color_bass_gain: Annotated[float, Field(description="低音增益")]
+    color_mid_gain: Annotated[float, Field(description="中音增益")]
+    color_treble_gain: Annotated[float, Field(description="高音增益")]
 
     loudness_enable: Annotated[int, Field(default=0,ge=0, le=1, description="响度开关, 0=关闭 1=启用")]
     loudness_threshold_gain: Annotated[int, Field(default=-15,description="响度阈值")]
