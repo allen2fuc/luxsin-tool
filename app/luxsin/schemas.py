@@ -5,8 +5,28 @@ from typing import Annotated, Any, Optional
 from pydantic import AfterValidator, BaseModel, BeforeValidator, Field
 
 
+def parse_volume(value: Any) -> int:
+    """将设备存储音量转换为前端展示音量。"""
+    if not isinstance(value, int):
+        raise ValueError(f"Invalid volume: {value}")
+
+    # 设备存储值 0~200，AI识别换算后的值
+    if 0 <= value <= 200:
+        return (value - 200) // 2
+
+    # 已经是前端展示值时，直接透传，避免重复换算
+    if 0 > value:
+        return value
+
+    raise ValueError(f"Invalid volume range: {value}")
+
+
 class DeviceSetting(BaseModel):
-    volume: Annotated[int, Field(description="音量：0～200,展示需要换算(volume-200)/2,存储需要换算回来volume*2+200")]
+    volume: Annotated[
+        int,
+        Field(description="音量：0～200,展示需要换算(volume-200)/2,存储需要换算回来volume*2+200"),
+        BeforeValidator(parse_volume),
+    ]
     language: Annotated[int, Field(description="语言：0=英语 1=繁体 2=简体")]
 
     # IO
