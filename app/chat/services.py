@@ -216,15 +216,14 @@ async def wait_for_frontend_result(tool_use_id: str, timeout: int) -> dict:
 
 
 def get_system_prompt(question: QuestionRequest) -> str:
-    return AI_SYSTEM_PROMPT.substitute(
-        language=get_language_name(question.device_setting.language), 
+    return AI_SYSTEM_PROMPT.substitute( 
         device=question.device_setting.device
     )
 
 
 async def generate_title(chat_id: uuid.UUID, messages: list, language: int) -> None:
     try:
-        generate_title_prompt = GENERATE_TITLE_PROMPT.substitute(language=LANGUAGE_NAME[language])
+        generate_title_prompt = GENERATE_TITLE_PROMPT
 
         # 用户输入的信息，将用户输入的消息合并（content 可能是 list/dict，需要先转字符串）
         merged_user_contents = []
@@ -404,7 +403,7 @@ async def compress_context(chat_id: uuid.UUID, messages: list, language: int) ->
     """
     压缩上下文，将历史对话摘要化
     """
-    summary_prompt = AI_SUMMARY_TEXT_PROMPT.substitute(language=LANGUAGE_NAME[language])
+    summary_prompt = AI_SUMMARY_TEXT_PROMPT
 
     user_history_message = f"""
     用户的对话内容：{json.dumps(messages, ensure_ascii=False)}
@@ -547,7 +546,7 @@ async def handle_tool(contents: list[dict], chat: Chat, messages: list, db: Asyn
             if fn_name == "set_peq":
                 # 不下发到前端写设备：before/after 落库，由 UI A/B 与用户点击「应用」再调用设备 API
                 before_peq = json.loads(get_current_peq(question))
-                after_peq = fn_input if isinstance(fn_input, dict) else {}
+                after_peq = convert_to_dict(fn_input) if isinstance(fn_input, dict) else {}
                 result = ToolResult(
                     type="tool_result",
                     tool_use_id=fn_id,
@@ -586,3 +585,8 @@ def handle_tool_result(payload: dict) -> dict:
         content=convert_str(content), 
         is_error=is_error
     )
+
+def convert_to_dict(content) -> dict | None:
+    if content is None:
+        return None
+    return json.loads(content) if isinstance(content, str) else content

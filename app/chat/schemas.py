@@ -23,10 +23,10 @@ class MessageRead(BaseModel):
     content: str = Field(description="消息内容")
     created_at: datetime = Field(description="创建时间")
     type: MessageType = Field(description="0默认消息, 2优化消息")
-    before_peq: dict | None = Field(description="优化前PEQ")
-    after_peq: dict | None = Field(description="优化后PEQ")
+    before_peq: dict | None = Field(default=None,description="优化前PEQ")
+    after_peq: dict | None = Field(default=None,description="优化后PEQ")
     applied: bool = Field(description="当type为2时, false显示应用, true显示回滚")
-    applied_at: datetime | None = Field(description="应用时间")
+    applied_at: datetime | None = Field(default=None, description="应用时间")
 
 class QuestionRequest(BaseModel):
     """question：本轮用户输入文本。"""

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+    <title>Luxsin Tool</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB" crossorigin="anonymous">
+</head>
+
+<body>
+
+    <div class="container">
+
+        <form class="row g-3">
+            <div class="col-md-2 form-floating">
+
+                <label for="deviceIP" class="form-label">Device IP</label>
+                <input type="text" class="form-control" id="deviceIP" placeholder="Device IP" value="10.0.0.119">
+            </div>
+
+            <div class="col-md-12">
+                <button type="button" class="btn btn-danger" data-bs-toggle="collapse" data-bs-target="#collapseExample"
+                    onclick="checkConnection()">Check Connection</button>
+                <button type="button" class="btn btn-warning" data-bs-toggle="collapse"
+                    data-bs-target="#collapseExample" onclick="getDeviceSettings()">Get Device Settings</button>
+                <button type="button" class="btn btn-success" data-bs-toggle="collapse"
+                    data-bs-target="#collapseExample" onclick="getPEQList()">Get PEQ List</button>
+                <button type="button" class="btn btn-primary" data-bs-toggle="collapse"
+                    data-bs-target="#collapseExample" onclick="getCurrentPEQ()">Get Current PEQ</button>
+                <button type="button" class="btn btn-info" data-bs-toggle="collapse" data-bs-target="#collapseExample"
+                    onclick="savePEQ()">Save PEQ</button>
+                <button type="button" class="btn btn-secondary" data-bs-toggle="collapse"
+                    data-bs-target="#collapseExample" onclick="deletePEQ()">Delete PEQ</button>
+            </div>
+
+        </form>
+
+        <div class="row">
+
+            <div class="col">
+
+                <div class="collapse" id="collapseExample">
+                    <div class="card card-body" id="console">
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <script>
+        const ALPHABET_CUSTOM = "KLMPQRSTUVWXYZABCGHdefIJjkNOlmnopqrstuvwxyzabcghiDEF34501289+67/"
+        const ALPHABET_STANDARD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        /**
+          * 将设备返回的自定义 Base64 字符串解码为 UTF-8 文本。
+          * @param {string} encoded
+          * @returns {string} 解码后的 UTF-8 文本
+          */
+        function decodeCustomBase64(encoded) {
+            let translated = "";
+            for (let i = 0; i < encoded.length; i++) {
+                const char = encoded.charAt(i);
+                const index = ALPHABET_CUSTOM.indexOf(char);
+                translated += index !== -1 ? ALPHABET_STANDARD.charAt(index) : char;
+            }
+            const raw = atob(translated);
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) {
+                bytes[i] = raw.charCodeAt(i);
+            }
+            return new TextDecoder("utf-8").decode(bytes);
+        }
+
+        /**
+         * 将普通字符串（如 JSON）编码为 POST 表单所需的自定义 Base64。
+         * @param {string} text
+         * @returns {string} 自定义字母表 Base64 字符串
+         */
+        function encodeCustomBase64(text) {
+            const bytes = new TextEncoder().encode(text);
+            let binary = "";
+            bytes.forEach(b => (binary += String.fromCharCode(b)));
+            const b64 = btoa(binary);
+            let encoded = "";
+            for (let i = 0; i < b64.length; i++) {
+                const char = b64.charAt(i);
+                const index = ALPHABET_STANDARD.indexOf(char);
+                encoded += index !== -1 ? ALPHABET_CUSTOM.charAt(index) : char;
+            }
+            return encoded;
+        }
+    </script>
+
+
+    <script>
+        // 将PEQ列表数据中的filters进行转换
+        function transformPEQListData(peqList) {
+            peqList.peq = peqList.peq.map(peq => {
+                peq.filters = JSON.parse(peq.filters)
+                return peq
+            })
+            return peqList
+        }
+
+        function transformCurrentPEQData(peqList) {
+            const index = peqList.peqSelect
+            return peqList.peq[index]
+        }
+
+    </script>
+
+
+
+    <script>
+
+        function checkConnection() {
+            const deviceIP = document.getElementById('deviceIP').value;
+            const url = `http://${deviceIP}/msgCount`
+            const console = document.getElementById('console')
+            fetch(url)
+                .then(response => response.text())
+                .then(data => console.innerHTML = `<pre>${data}</pre>`)
+                .catch(error => console.innerHTML = `<pre>${error}</pre>`);
+        }
+
+        function getDeviceSettings() {
+            const deviceIP = document.getElementById('deviceIP').value;
+            const url = `http://${deviceIP}/dev/info.cgi?action=syncData`
+            const console = document.getElementById('console')
+            fetch(url)
+                .then(response => response.text())
+                .then(data => decodeCustomBase64(data))
+                .then(data => JSON.parse(data))
+                .then(data => console.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`)
+                .catch(error => console.innerHTML = `<pre>${error}</pre>`);
+        }
+
+        function getPEQList() {
+            const deviceIP = document.getElementById('deviceIP').value;
+            const url = `http://${deviceIP}/dev/info.cgi?action=syncPeq`
+            const console = document.getElementById('console')
+            fetch(url)
+                .then(response => response.text())
+                .then(data => decodeCustomBase64(data))
+                .then(data => JSON.parse(data))
+                .then(data => transformPEQListData(data))
+                .then(data => console.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`)
+                .catch(error => console.innerHTML = `<pre>${error}</pre>`);
+        }
+
+        function getCurrentPEQ() {
+            const deviceIP = document.getElementById('deviceIP').value;
+            const url = `http://${deviceIP}/dev/info.cgi?action=syncPeq`
+            const console = document.getElementById('console')
+            fetch(url)
+                .then(response => response.text())
+                .then(data => decodeCustomBase64(data))
+                .then(data => JSON.parse(data))
+                .then(data => transformPEQListData(data))
+                .then(data => transformCurrentPEQData(data))
+                .then(data => console.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`)
+                .catch(error => console.innerHTML = `<pre>${error}</pre>`);
+        }
+
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+        crossorigin="anonymous"></script>
+</body>
+
+</html>

@@ -6,12 +6,12 @@ from pydantic import AfterValidator, BaseModel, BeforeValidator, Field
 
 
 class DeviceSetting(BaseModel):
-    volume: Annotated[int, Field(default=80, ge=0, le=200, description="音量：0～200,展示需要换算(volume-200)/2,存储需要换算回来volume*2+200")]
-    language: Annotated[int, Field(ge=0, le=2, description="语言：0=英语 1=繁体 2=简体")]
+    volume: Annotated[int, Field(description="音量：0～200,展示需要换算(volume-200)/2,存储需要换算回来volume*2+200")]
+    language: Annotated[int, Field(description="语言：0=英语 1=繁体 2=简体")]
 
     # IO
-    input: Annotated[int, Field(default=4, ge=0, le=100, description="IO页 Input：0=USB-B 1=USB-C 2=同轴 3=光纤 4=蓝牙 5=HDMI 6=模拟RCA 7=U盘")]
-    output: Annotated[int, Field(default=3, ge=0, le=3, description="IO页 Output：0=XLR 1=RCA 2=XLR/RCA 3=耳机")]
+    input: Annotated[int, Field(description="IO页 Input：0=USB-B 1=USB-C 2=同轴 3=光纤 4=蓝牙 5=HDMI 6=模拟RCA 7=U盘")]
+    output: Annotated[int, Field(description="IO页 Output：0=XLR 1=RCA 2=XLR/RCA 3=耳机")]
 
     # Version
     version: Annotated[int, Field(description="版本代码")]
@@ -21,44 +21,44 @@ class DeviceSetting(BaseModel):
     audioFormat: Annotated[Optional[str], Field(None, description="音频格式，X8默认DSD64 2.82MHz", examples=["DSD64 2.82MHz"])]
 
     # General Settings
-    vu: Annotated[int, Field(default=8, ge=0, le=13, description="VU表：0=vu1 ... 13=vu14")]
-    vu_count: Annotated[int, Field(default=16, description="VU数量, X8默认16个")]
-    screenLight: Annotated[int, Field(default=1, ge=0, le=2, description="屏幕亮度：0=较亮 1=中等 2=较暗")]
-    screenOff: Annotated[int, Field(default=0, ge=0, le=4, description="屏幕关闭：0=常亮 1=30秒 2=1分钟 3=3分钟 4=5分钟")]
-    sleep: Annotated[int, Field(default=0,ge=0, le=4, description="休眠：0=关闭 1=1分钟 2=5分钟 3=10分钟 4=15分钟")]
-    buttonLight: Annotated[int, Field(default=2,ge=0, le=3, description="旋钮亮度：0=关闭 1=较亮 2=中等 3=较暗")]
-    buttonShort: Annotated[int, Field(default=1, description="按键短按配置, X8默认1")]
-    autoHome: Annotated[int, Field(default=0,ge=0, le=3, description="自动返回首页：0=关闭 1=20秒 2=40秒 3=60秒")]
-    knob_breathlight: Annotated[int, Field(default=0, ge=0, le=1, description="旋钮熄屏呼吸灯：0=开启 1=关闭")]
+    vu: Annotated[int, Field(description="VU表：0=vu1 ... 13=vu14")]
+    vu_count: Annotated[int, Field(description="VU数量, X8默认16个")]
+    screenLight: Annotated[int, Field(description="屏幕亮度：0=较亮 1=中等 2=较暗")]
+    screenOff: Annotated[int, Field(description="屏幕关闭：0=常亮 1=30秒 2=1分钟 3=3分钟 4=5分钟")]
+    sleep: Annotated[int, Field(description="休眠：0=关闭 1=1分钟 2=5分钟 3=10分钟 4=15分钟")]
+    buttonLight: Annotated[int, Field(description="旋钮亮度：0=关闭 1=较亮 2=中等 3=较暗")]
+    buttonShort: Annotated[int, Field(description="按键短按配置, X8默认1")]
+    autoHome: Annotated[int, Field(description="自动返回首页：0=关闭 1=20秒 2=40秒 3=60秒")]
+    knob_breathlight: Annotated[int, Field(description="旋钮熄屏呼吸灯：0=开启 1=关闭")]
 
     # Audio Settings
     balance: Annotated[Optional[int], Field(None, description="左右平衡：-15～15")]
-    pcm: Annotated[int, Field(default=2, ge=0, le=5, description="滤波特性：0=快速滚降 1=慢速滚降 2=短延时快速 3=短延时慢速 4=超慢速 5=低离散短延迟")]
-    dacGain: Annotated[int, Field(default=2,ge=0, le=2, description="耳机增益：0=低 1=中 2=高")]
-    soundStep: Annotated[int, Field(default=1,ge=0, le=3, description="音量步进：0=0.5dB 1=1dB 2=2dB 3=3dB")]
-    bootSound: Annotated[int, Field(default=0, description="耳机音量：0=默认 -5db~-30db")]
-    xlr: Annotated[int, Field(default=0,ge=0, le=1, description="XLR端口极性：0=正常 1=反向")]
-    dacArc: Annotated[int, Field(default=0,ge=0, le=1, description="ARC模式：0=ARC 1=EARC")]
+    pcm: Annotated[int, Field(description="滤波特性：0=快速滚降 1=慢速滚降 2=短延时快速 3=短延时慢速 4=超慢速 5=低离散短延迟")]
+    dacGain: Annotated[int, Field(description="耳机增益：0=低 1=中 2=高")]
+    soundStep: Annotated[int, Field(description="音量步进：0=0.5dB 1=1dB 2=2dB 3=3dB")]
+    bootSound: Annotated[int, Field(description="耳机音量：0=默认 -5db~-30db")]
+    xlr: Annotated[int, Field(description="XLR端口极性：0=正常 1=反向")]
+    dacArc: Annotated[int, Field(description="ARC模式：0=ARC 1=EARC")]
 
     # Home
-    dsp_enable: Annotated[int, Field(default=1,ge=0, le=1, description="Bypass开关：0=关闭 1=启用")]
+    dsp_enable: Annotated[int, Field(description="Bypass开关：0=关闭 1=启用")]
     bt_play: Annotated[Optional[int], Field(default=None, description="蓝牙播放状态：1=暂停/播放，默认None表示没连接蓝牙")]
 
     # PEQ
-    peqSelect: Annotated[int, Field(default=0,ge=0, le=1, description="PEQ选择的索引下标，0=第一个PEQ 1=第二个PEQ。切换PEQ时，需要设置此值")]
-    peqEnable: Annotated[int, Field(default=1,ge=0, le=1, description="PEQ开关：0=关闭 1=启用")]
+    peqSelect: Annotated[int, Field(description="PEQ选择的索引下标，0=第一个PEQ 1=第二个PEQ。切换PEQ时，需要设置此值")]
+    peqEnable: Annotated[int, Field(description="PEQ开关：0=关闭 1=启用")]
 
     # Scene
-    scene_enable: Annotated[int, Field(default=0,ge=0, le=1, description="场景启用")]
-    scene_value: Annotated[int, Field(default=0,description="场景值")]
+    scene_enable: Annotated[int, Field(description="场景启用")]
+    scene_value: Annotated[int, Field(description="场景值")]
 
     # Effect
-    audio_enable: Annotated[int, Field(ge=0, le=1, description="Effect总开关：0=关闭 1=启用")]
-    effect_enable: Annotated[int, Field(ge=0, le=1, description="Effect样式开关")]
-    effect_value: Annotated[int, Field(ge=0, le=15, description="Effect样式：0=古典 1=舞曲 2=流行 ... 15=慢摇")]
+    audio_enable: Annotated[int, Field(description="Effect总开关：0=关闭 1=启用")]
+    effect_enable: Annotated[int, Field(description="Effect样式开关")]
+    effect_value: Annotated[int, Field(description="Effect样式：0=古典 1=舞曲 2=流行 ... 15=慢摇")]
 
-    width_enable: Annotated[int, Field(default=0,ge=0, le=1, description="声场宽度开关, 0=关闭 1=启用")]
-    width_value: Annotated[int, Field(default=25, ge=0, le=100, description="声场宽度：0～100")]
+    width_enable: Annotated[int, Field(description="声场宽度开关, 0=关闭 1=启用")]
+    width_value: Annotated[int, Field(description="声场宽度：0～100")]
 
     color_enable: Annotated[int, Field(ge=0, le=1, description="音调开关")]
     color_bass_gain: Annotated[float, Field(description="低音增益")]
