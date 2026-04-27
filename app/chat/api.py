@@ -145,7 +145,7 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                     if tokens >= settings.SUMMARY_MAX_TOKENS or len(messages) >= settings.SUMMARY_MAX_MESSAGES:
                         logger.info(f"compress_context: chat_id={chat.id}, tokens={tokens}, messages={len(messages)}")
                         background_tasks.add_task(
-                            compress_context, chat.id, messages, question.device_setting.language
+                            compress_context, chat.id, messages
                         )
 
                     if chat.title == DEFAULT_TITLE:
@@ -153,7 +153,6 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                             generate_title,
                             chat.id,
                             messages,
-                            question.device_setting.language,
                         )
                     break
 

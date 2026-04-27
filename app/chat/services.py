@@ -221,7 +221,7 @@ def get_system_prompt(question: QuestionRequest) -> str:
     )
 
 
-async def generate_title(chat_id: uuid.UUID, messages: list, language: int) -> None:
+async def generate_title(chat_id: uuid.UUID, messages: list) -> None:
     try:
         generate_title_prompt = GENERATE_TITLE_PROMPT
 
@@ -399,7 +399,7 @@ async def get_content_messages(db_messages: list):
 
 
 
-async def compress_context(chat_id: uuid.UUID, messages: list, language: int) -> None:
+async def compress_context(chat_id: uuid.UUID, messages: list) -> None:
     """
     压缩上下文，将历史对话摘要化
     """
