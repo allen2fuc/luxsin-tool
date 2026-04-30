@@ -363,7 +363,7 @@ TOOLS = [
 FRONTEND_TOOLS = {t["name"] for t in TOOLS if t.get("_executor") == "frontend"}
 BACKEND_TOOLS  = {t["name"] for t in TOOLS if t.get("_executor") == "backend"}
 
-anthropic_tools = [{k: v for k, v in t.items() if not k.startswith("_")} for t in TOOLS]
+CUSTOM_TOOLS = [{k: v for k, v in t.items() if not k.startswith("_")} for t in TOOLS]
 
 
 

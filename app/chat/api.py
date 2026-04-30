@@ -2,6 +2,9 @@ import json
 import logging
 import uuid
 
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
 import anthropic
 from fastapi import Depends, Query, Request, BackgroundTasks, APIRouter
 from fastapi.responses import EventSourceResponse
@@ -13,7 +16,7 @@ from app.core.database import get_db
 
 from app.core.jinja2 import templates
 
-from .constants import anthropic_tools
+from .constants import CUSTOM_TOOLS
 from . import crud as chat_crud
 from .models import DEFAULT_TITLE
 from .schemas import ChatRead, MessageRead, QuestionRequest, QuestionResponse, ToolResultRequest
@@ -79,92 +82,119 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
 
     print_messages(messages)
 
-    # 多次循环，因为可能需要工具调用多次才能完成任务
-    while True:
-        # 获取系统提示词
-        system_prompt = get_system_prompt(question)
+    # AutoEQ MCP Server 参数
+    server_params = StdioServerParameters(
+        command="autoeq-mcp",
+        args=[],
+        env=None,
+    )
 
-        logger.info(f"system prompt: {system_prompt[:20]}...")
+    async with stdio_client(server_params) as (read, write):
+        
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            
+            # 2. 拉取 MCP 工具列表，转成 Anthropic 格式
+            autoeq_mcp_tools = await session.list_tools()
 
-        try:
-            # 调用 AI 大模型
-            async with anthropic_client.messages.stream(
-                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-                model=settings.AI_MODEL,
-                messages=messages,
-                tools=anthropic_tools,
-                max_tokens=settings.AI_MAX_TOKENS,
-            ) as stream:
+            autoeq_tools = [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.inputSchema,
+                }
+                for t in autoeq_mcp_tools.tools
+            ]
 
-                async for event in stream:
-                    if event.type == "text":
-                        yield QuestionResponse(type="text", content=event.text)
+            anthropic_tools = CUSTOM_TOOLS + autoeq_tools
 
-                yield QuestionResponse(type="text", content="\n")
+            # 多次循环，因为可能需要工具调用多次才能完成任务
+            while True:
+                # 获取系统提示词
+                system_prompt = get_system_prompt(question)
 
-                final_message = await stream.get_final_message()
-                logger.info(f"final message: {final_message}")
+                logger.info(f"system prompt: {system_prompt[:20]}...")
 
-                usage = final_message.usage
-                tokens = usage.input_tokens + usage.output_tokens
+                try:
 
-                # 将AI的回复内容格式化
-                contents = [
-                    formatter(content)
-                    for content in final_message.content
-                    if (formatter := CONTENT_FORMATTERS.get(content.type, None))
-                ]
+                    # 调用 AI 大模型
+                    async with anthropic_client.messages.stream(
+                        system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+                        model=settings.AI_MODEL,
+                        messages=messages,
+                        tools=anthropic_tools,
+                        max_tokens=settings.AI_MAX_TOKENS,
+                    ) as stream:
 
-                logger.info(f"AI Assistant Response: StopReason={final_message.stop_reason}, Length={len(contents)}, Contents={contents}")
+                        async for event in stream:
+                            if event.type == "text":
+                                yield QuestionResponse(type="text", content=event.text)
 
-                await save_ai_response(chat.id, contents, tokens, messages, db)
+                        yield QuestionResponse(type="text", content="\n")
 
-                # 工具调用结果处理
-                if final_message.stop_reason == "tool_use":
-                    async for tool_request in handle_tool(contents, chat, messages, db, question):
-                        yield QuestionResponse(type="tool_use", content=tool_request)
-                elif final_message.stop_reason == "max_tokens":
-                    logger.warning(f"Response was cut off at token limit. chat_id={chat.id}")
+                        final_message = await stream.get_final_message()
+                        logger.info(f"final message: {final_message}")
+
+                        usage = final_message.usage
+                        tokens = usage.input_tokens + usage.output_tokens
+
+                        # 将AI的回复内容格式化
+                        contents = [
+                            formatter(content)
+                            for content in final_message.content
+                            if (formatter := CONTENT_FORMATTERS.get(content.type, None))
+                        ]
+
+                        logger.info(f"AI Assistant Response: StopReason={final_message.stop_reason}, Length={len(contents)}, Contents={contents}")
+
+                        await save_ai_response(chat.id, contents, tokens, messages, db)
+
+                        # 工具调用结果处理
+                        if final_message.stop_reason == "tool_use":
+                            async for tool_request in handle_tool(contents, chat, messages, db, question, session):
+                                yield QuestionResponse(type="tool_use", content=tool_request)
+                        elif final_message.stop_reason == "max_tokens":
+                            logger.warning(f"Response was cut off at token limit. chat_id={chat.id}")
+                            break
+                        # 如果最后一条消息是 end_turn 且没有内容，则保存用户问题，并继续循环
+                        elif final_message.stop_reason == "end_turn" and not final_message.content:
+                            await save_user_question(chat.id, "Please continue", messages, db)
+                        elif final_message.stop_reason == "model_context_window_exceeded":
+                            logger.warning(f"Response reached model's context window limit. chat_id={chat.id}")
+                            break
+                        elif final_message.stop_reason == "pause_turn":
+                            logger.warning(f"Continue the conversation by sending the response back. chat_id={chat.id}")
+                            break
+                        elif final_message.stop_reason == "refusal":
+                            logger.warning(f"Claude was unable to process this request. chat_id={chat.id}")
+                            break
+                        else:
+                            logger.warning(f"End turn stream reason: {final_message.stop_reason}")
+                            # Handle end_turn and other cases
+                            tokens = usage.input_tokens + usage.output_tokens
+                            if tokens >= settings.SUMMARY_MAX_TOKENS or len(messages) >= settings.SUMMARY_MAX_MESSAGES:
+                                logger.info(f"compress_context: chat_id={chat.id}, tokens={tokens}, messages={len(messages)}")
+                                background_tasks.add_task(
+                                    compress_context, chat.id, messages
+                                )
+
+                            if chat.title == DEFAULT_TITLE:
+                                background_tasks.add_task(
+                                    generate_title,
+                                    chat.id,
+                                    messages,
+                                )
+                            break
+
+                except anthropic.APITimeoutError as e:
+                    logger.exception(e)
+                    yield QuestionResponse(type="error", content="AI connection timeout. Please try again later.")
                     break
-                # 如果最后一条消息是 end_turn 且没有内容，则保存用户问题，并继续循环
-                elif final_message.stop_reason == "end_turn" and not final_message.content:
-                    await save_user_question(chat.id, "Please continue", messages, db)
-                elif final_message.stop_reason == "model_context_window_exceeded":
-                    logger.warning(f"Response reached model's context window limit. chat_id={chat.id}")
-                    break
-                elif final_message.stop_reason == "pause_turn":
-                    logger.warning(f"Continue the conversation by sending the response back. chat_id={chat.id}")
-                    break
-                elif final_message.stop_reason == "refusal":
-                    logger.warning(f"Claude was unable to process this request. chat_id={chat.id}")
-                    break
-                else:
-                    logger.warning(f"End turn stream reason: {final_message.stop_reason}")
-                    # Handle end_turn and other cases
-                    tokens = usage.input_tokens + usage.output_tokens
-                    if tokens >= settings.SUMMARY_MAX_TOKENS or len(messages) >= settings.SUMMARY_MAX_MESSAGES:
-                        logger.info(f"compress_context: chat_id={chat.id}, tokens={tokens}, messages={len(messages)}")
-                        background_tasks.add_task(
-                            compress_context, chat.id, messages
-                        )
-
-                    if chat.title == DEFAULT_TITLE:
-                        background_tasks.add_task(
-                            generate_title,
-                            chat.id,
-                            messages,
-                        )
+                except Exception as e:
+                    logger.exception(e)
+                    yield QuestionResponse(type="error", content="Internal server error")
                     break
 
-        except anthropic.APITimeoutError as e:
-            logger.exception(e)
-            yield QuestionResponse(type="error", content="AI connection timeout. Please try again later.")
-            break
-        except Exception as e:
-            logger.exception(e)
-            yield QuestionResponse(type="error", content="Internal server error")
-            break
-
-        logger.info(f"Continue the conversation by sending the response back. chat_id={chat.id}")
+                logger.info(f"Continue the conversation by sending the response back. chat_id={chat.id}")
 
     yield QuestionResponse(type="done")

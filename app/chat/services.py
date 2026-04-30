@@ -5,6 +5,7 @@
 import asyncio
 import logging
 import uuid
+from mcp.client.session import ClientSession
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 import json
@@ -516,7 +517,7 @@ BACKEND_TOOLS_FUNC = {
 
 
 
-async def handle_tool(contents: list[dict], chat: Chat, messages: list, db: AsyncSession, question: QuestionRequest):
+async def handle_tool(contents: list[dict], chat: Chat, messages: list, db: AsyncSession, question: QuestionRequest, session: ClientSession):
     results = []
 
     before_peq: dict | None = None
@@ -563,6 +564,16 @@ async def handle_tool(contents: list[dict], chat: Chat, messages: list, db: Asyn
                 result = await execute_frontend_tool(fn_id)
                 yield content
                 results.append(handle_tool_result(result))
+        else:
+            result = await session.call_tool(fn_name, fn_input)
+            results.append(ToolResult(
+                type="tool_result",
+                tool_use_id=fn_id,
+                content=[
+                    {"type": "text", "text": c.text}
+                    for c in result.content
+                ],
+            ))
 
     await save_tool_result(chat.id, results, messages, db, before_peq=before_peq, after_peq=after_peq)
 
