@@ -20,7 +20,22 @@ from .constants import CUSTOM_TOOLS
 from . import crud as chat_crud
 from .models import DEFAULT_TITLE
 from .schemas import ChatRead, MessageRead, QuestionRequest, QuestionResponse, ToolResultRequest
-from .services import CONTENT_FORMATTERS, compress_context, generate_title, get_content_messages, get_system_prompt, handle_tool, print_messages, publish_tool_result, get_or_create_chat, save_ai_response, save_user_question, save_tool_result
+from .services import (
+    CONTENT_FORMATTERS,
+    assistant_message_used_tools,
+    compress_context,
+    generate_title,
+    get_content_messages,
+    get_system_prompt,
+    handle_tool,
+    is_eq_optimization_intent,
+    print_messages,
+    publish_tool_result,
+    get_or_create_chat,
+    save_ai_response,
+    save_user_question,
+    save_tool_result,
+)
 
 router = APIRouter()
 
@@ -108,12 +123,21 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
 
             anthropic_tools = CUSTOM_TOOLS + autoeq_tools
 
+            eq_intent = is_eq_optimization_intent(question.question)
+            first_api_call = True
+            eq_nudge_sent = False
+
             # 多次循环，因为可能需要工具调用多次才能完成任务
             while True:
                 # 获取系统提示词
                 system_prompt = get_system_prompt(question)
 
                 logger.info(f"system prompt: {system_prompt[:20]}...")
+
+                stream_kwargs: dict = {}
+                if eq_intent and first_api_call:
+                    # EQ 优化首轮：至少调用一个工具，避免只回复「我先查看」就 end_turn
+                    stream_kwargs["tool_choice"] = {"type": "any"}
 
                 try:
 
@@ -124,6 +148,7 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                         messages=messages,
                         tools=anthropic_tools,
                         max_tokens=settings.AI_MAX_TOKENS,
+                        **stream_kwargs,
                     ) as stream:
 
                         async for event in stream:
@@ -148,6 +173,7 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                         logger.info(f"AI Assistant Response: StopReason={final_message.stop_reason}, Length={len(contents)}, Contents={contents}")
 
                         await save_ai_response(chat.id, contents, tokens, messages, db)
+                        first_api_call = False
 
                         # 工具调用结果处理
                         if final_message.stop_reason == "tool_use":
@@ -159,6 +185,23 @@ async def sse(question: QuestionRequest, background_tasks: BackgroundTasks, db: 
                         # 如果最后一条消息是 end_turn 且没有内容，则保存用户问题，并继续循环
                         elif final_message.stop_reason == "end_turn" and not final_message.content:
                             await save_user_question(chat.id, "Please continue", messages, db)
+                        elif (
+                            final_message.stop_reason == "end_turn"
+                            and eq_intent
+                            and not assistant_message_used_tools(contents)
+                            and not eq_nudge_sent
+                        ):
+                            eq_nudge_sent = True
+                            logger.warning(
+                                "EQ intent but assistant ended without tools; nudging. chat_id=%s",
+                                chat.id,
+                            )
+                            await save_user_question(
+                                chat.id,
+                                "请立即调用 get_current_peq 继续完成 EQ 优化，不要仅用文字说明将要做什么。",
+                                messages,
+                                db,
+                            )
                         elif final_message.stop_reason == "model_context_window_exceeded":
                             logger.warning(f"Response reached model's context window limit. chat_id={chat.id}")
                             break

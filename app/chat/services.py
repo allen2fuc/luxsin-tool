@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import re
 import uuid
 from mcp.client.session import ClientSession
 from pydantic import BaseModel
@@ -214,6 +215,25 @@ async def wait_for_frontend_result(tool_use_id: str, timeout: int) -> dict:
     except asyncio.TimeoutError:
         return {"type": "tool_result", "tool_use_id": tool_use_id, "content": "Access to tool execution timed out.", "is_error": True}
 
+
+
+_EQ_OPTIMIZE_PATTERN = re.compile(
+    r"(优化|调整|调节|调校|调一下|调下|改善|改进|提升).{0,12}(eq|均衡|均衡器|peq|参数均衡)"
+    r"|(eq|均衡|均衡器|peq).{0,12}(优化|调整|调节|调校|调音)"
+    r"|调\s*eq|调音|autoeq",
+    re.IGNORECASE,
+)
+
+
+def is_eq_optimization_intent(text: str) -> bool:
+    """用户消息是否属于 EQ 优化类请求（用于首轮强制/续跑工具调用）。"""
+    if not text or not text.strip():
+        return False
+    return bool(_EQ_OPTIMIZE_PATTERN.search(text.strip()))
+
+
+def assistant_message_used_tools(contents: list[dict]) -> bool:
+    return any(isinstance(c, dict) and c.get("type") == "tool_use" for c in contents)
 
 
 def get_system_prompt(question: QuestionRequest) -> str:
