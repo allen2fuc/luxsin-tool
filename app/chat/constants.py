@@ -19,68 +19,6 @@ class MessageType(IntEnum):
     TITLE = 3
 
 TOOLS = [
-    # {
-    #     "name": "optimize_eq",
-    #     "description": "优化EQ，根据用户需求优化EQ，返回优化后的EQ参数。",
-    #     "input_schema": {
-    #         "type": "object",
-    #         "properties": {
-    #             "name": {
-    #                 "type": "string",
-    #                 "description": "EQ名称，由brand和model合并而成。优化后参数可以加后缀装饰区分。"
-    #             },
-    #             "brand": {
-    #                 "type": "string",
-    #                 "description": "主板名称，如：7Hz"
-    #             },
-    #             "model": {
-    #                 "type": "string",
-    #                 "description": "型号名称，如：Salnotes Dioko"
-    #             },
-    #             "filters": {
-    #                 "type": "array",
-    #                 "description": "滤波器列表：10个滤波器",
-    #                 "items": {
-    #                     "type": "object",
-    #                     "properties": {
-    #                         "type": {
-    #                             "type": "integer",
-    #                             "description": "滤波器类型：LOW_PASS/LPF=0,HIGH_PASS/HPF=1,BAND_PASS/BPF=2,NOTCH=3,PEAKING/PEAK=4,LOW_SHELF/LSHELF=5,HIGH_SHELF/HSHELF=6,ALL_PASS/APF=7",
-    #                             "enum": [0, 1, 2, 3, 4, 5, 6, 7],
-    #                         },
-    #                         "fc": {
-    #                             "type": "number",
-    #                             "description": "FREQ：中心频率，范围1～20000Hz",
-    #                         },
-    #                         "gain": {
-    #                             "type": "number",
-    #                             "description": "增益值：-15.0～15.0dB",
-    #                         },
-    #                         "q": {
-    #                             "type": "number",
-    #                             "description": "Q值：范围0.1～10.0dB",
-    #                         }
-    #                     },
-    #                     "required": ["type", "fc", "gain", "q"],
-    #                 }
-    #             },
-    #             "preamp": {
-    #                 "type": "number",
-    #                 "description": "总增益：-15.0～15.0dB"
-    #             },
-    #             "canDel": {
-    #                 "type": "integer",
-    #                 "description": "是否可以删除：0=不能删除 1=能删除，默认生成时可以删除"
-    #             },
-    #             "autoPre": {
-    #                 "type": "integer",
-    #                 "description": "是否自动预设：0=不能自动预设 1=能自动预设，默认生成时不自动预设"
-    #             }
-    #         },
-    #         "required": ["name", "brand", "model", "filters", "preamp", "canDel", "autoPre"],
-    #     },
-    #     "_executor": "backend",
-    # },
     {
         "name": "get_device_settings",
         "description": "获取当前设备的全部设置参数，用于读取设备当前配置状态，不需要任何输入参数。",
@@ -282,7 +220,7 @@ TOOLS = [
     },
     {
         "name": "set_peq",
-        "description": "将推荐的完整 PEQ 参数提交到服务端并落库，用于在对话中生成 A/B 对比（当前配置 vs 推荐配置）。是否写入物理设备由用户通过客户端或接口另行确认后执行，非本工具直接写入；仅在需要保存该条推荐快照供对比时调用。",
+        "description": "将 AI 生成的完整推荐 PEQ 提交用于对话内 A/B 对比（当前配置 vs 推荐配置），不向设备写入、不向用户设备存储新预设。只要已产出可执行的完整 PEQ（含 name、brand、model、10 个 filters、preamp 等），必须在同一轮回复中调用本工具，不得仅在正文中列出参数而不调用。用户确认后在前端点「应用」才会真正写入设备。",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -391,6 +329,7 @@ AI_SYSTEM_PROMPT = Template("""
 - 删除操作 → 调用 delete_* 工具
 - 多步操作时，先查询当前状态，再执行修改
 - 只要涉及“读取/修改设备或 EQ 数据”，都必须通过工具完成，不可凭空生成设备当前值
+- EQ 优化：生成完整推荐参数后，**必须**调用 set_peq 提交 A/B 对比；不得把 set_peq 当作「用户确认应用后才调用」的步骤
 
 ## EQ 工程模式（重点）
 - 当用户意图包含以下任一情况时，进入 EQ 工程模式：
@@ -401,17 +340,23 @@ AI_SYSTEM_PROMPT = Template("""
 - EQ 工程模式下，按以下流程执行：
   1) 信息检查：确认品牌、型号、优化目标是否明确
   2) 若信息不足：一次性提出最少必要问题，不要连续追问
-  3) 读取现状：先获取当前 EQ（必要时获取设备设置作为上下文）
-  4) 参数生成：调用 optimize_eq 生成可执行参数
-  5) 保存对比快照：需要展示 A/B 时调用 set_peq，将推荐 PEQ 落库供界面对比（不表示已写入设备）
-  6) 写入设备：仅在用户通过客户端或接口明确要应用时，再由客户端/接口完成实际写入；并给用户简短结果说明
+  3) 读取现状：先调用 get_current_peq（必要时 get_device_settings）获取真实当前配置
+  4) 生成参数：根据现状与目标，生成完整可执行的 PEQ JSON（10 个 filters + preamp 等）
+  5) **必须**调用 set_peq：将第 4 步的完整推荐参数作为 input 传入，供界面 A/B 对比；**禁止**只在回复文字里贴参数而不调用工具
+  6) 向用户说明：推荐参数已生成，可在界面查看「当前 vs 推荐」对比；需要生效时点「应用」写入设备——**不要**先问「是否需要应用」再决定是否调用 set_peq
 
-- 如果用户只想“分析”而非“直接生成参数”，先给分析结论与方向，不强行应用。
-- 如果用户明确要求“直接给我参数并应用”，且信息充分，按流程快速执行并反馈结果。
+- set_peq 与「写入设备」是两件事：调用 set_peq = 仅提交对比数据（设备上的 EQ **不变**）；写入设备 = 用户在前端点「应用」
+- 如果用户只想「分析、不给具体参数」，只输出分析结论，不调用 set_peq。
+- 一旦输出了完整推荐 PEQ（含具体 filters 数值），无论用户是否说要应用，都必须执行第 5 步调用 set_peq。
+
+## EQ 优化完成后的对用户表述（必须遵守）
+- **禁止**对用户说：已保存、已保存到设备、已写入、已应用到设备、预设已保存 等（set_peq 不会改动物理设备，也不是「保存预设」）
+- **应说**：已生成推荐 EQ / 优化方案已就绪；可在界面查看 A/B 对比；满意后点「应用」才会写入设备
+- 工具返回成功只表示「对比数据已就绪」，不代表设备已变更
 
 ## 回复风格
 - 设备助手场景：先回答结论，再给必要步骤或建议
-- EQ 工程场景：先说明优化目标，再给执行进度（信息检查/已生成/待应用/已应用）
+- EQ 工程场景：先说明优化目标，再给执行进度（信息检查/已生成推荐/可查看 A/B 对比/待用户在界面应用）
 - 除非用户要求详细说明，否则保持简洁
 
 ## 主动引导（仅当用户意图不明确时）

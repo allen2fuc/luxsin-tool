@@ -450,7 +450,15 @@ async def save_tool_result(
 ):
     tool_results_list = [result.model_dump(exclude_none=True) for result in tool_results]
     logger.info(f"save_tool_result: {tool_results_list}")
-    await save_message(chat_id, MessageRole.USER, tool_results_list, db, before_peq=before_peq, after_peq=after_peq, applied=applied)
+    msg_type = (
+        MessageType.OPTIMIZING
+        if before_peq is not None and after_peq is not None
+        else MessageType.DEFAULT
+    )
+    await save_message(
+        chat_id, MessageRole.USER, tool_results_list, db,
+        type=msg_type, before_peq=before_peq, after_peq=after_peq, applied=applied,
+    )
     messages.append(MessagePayload(role=MessageRole.USER, content=tool_results_list))
 
 async def save_message(
@@ -480,10 +488,15 @@ def get_language_name(language:int):
     return LANGUAGE_NAME[language]
 
 def print_messages(messages: list):
-    print("----------Begin Messages ----------")
-    for message in messages:
-        print("\t", message["role"], ":\n\t\t", message["content"])
-    print("----------End Messages ----------")
+    # logger.info("----------Begin Messages ----------")
+    # for message in messages:
+    #     logger.info("\t", message["role"], ":\n\t\t", message["content"])
+    # logger.info("----------End Messages ----------")
+
+    # 用户最后一次的问题
+    if messages:
+        last_message = messages[-1]
+        logger.info(f"user last question: {last_message}")
 
 
 
@@ -545,7 +558,7 @@ async def handle_tool(contents: list[dict], chat: Chat, messages: list, db: Asyn
         elif fn_name in FRONTEND_TOOLS:
 
             if fn_name == "set_peq":
-                # 不下发到前端写设备：before/after 落库，由 UI A/B 与用户点击「应用」再调用设备 API
+                # 不下发前端写设备：仅记录 before/after 供 UI A/B；用户点「应用」才写设备
                 before_peq = json.loads(get_current_peq(question))
                 after_peq = convert_to_dict(fn_input) if isinstance(fn_input, dict) else {}
                 result = ToolResult(
@@ -554,7 +567,10 @@ async def handle_tool(contents: list[dict], chat: Chat, messages: list, db: Asyn
                     content=json.dumps(
                         {
                             "ok": True,
-                            "message": "PEQ pending user confirmation (A/B); not written to device yet.",
+                            "message": (
+                                "推荐 PEQ 已提交用于 A/B 对比，设备当前 EQ 未改变。"
+                                "回复用户时说明可在界面查看对比；勿使用「已保存」「已写入设备」等表述。"
+                            ),
                         },
                         ensure_ascii=False,
                     ),
